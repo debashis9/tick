@@ -1,6 +1,6 @@
 // Cache-first app shell. Bump VERSION on every deploy: the browser only installs a new
 // service worker when this file's bytes change, and the app then offers "Refresh".
-const VERSION = 'tick-v1';
+const VERSION = 'tick-v2';
 
 const SHELL = [
   './',
@@ -51,6 +51,15 @@ self.addEventListener('fetch', event => {
   if (req.mode === 'navigate') {
     // Any page load (including ?query or #hash variants) gets the cached shell.
     event.respondWith(caches.match('./index.html').then(r => r || fetch(req)));
+    return;
+  }
+  if (new URL(req.url).pathname.endsWith('/manifest.webmanifest')) {
+    // Network first, so install details (name, id, icons) are never stale; cache when offline.
+    event.respondWith(fetch(req).then(res => {
+      const copy = res.clone();
+      caches.open(VERSION).then(cache => cache.put('./manifest.webmanifest', copy));
+      return res;
+    }).catch(() => caches.match('./manifest.webmanifest')));
     return;
   }
   event.respondWith(caches.match(req, { ignoreSearch: true }).then(r => r || fetch(req)));
