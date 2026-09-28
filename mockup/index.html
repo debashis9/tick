@@ -1,0 +1,1007 @@
+<title>Tick Habit Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..700&family=Figtree:wght@400;500;600;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+:root {
+  --bg: #F4F5F2; --surface: #FFFFFF; --surface-2: #ECEEEA;
+  --border: #E1E4DE; --border-strong: #C9CEC6;
+  --text: #161A17; --text-2: #5E665F; --text-3: #979E96;
+  --track: #E4E7E2; --missed: #BFC5BD; --off: #EDEFEB;
+  --ink: #161A17; --on-ink: #FFFFFF; --on-c: #FFFFFF;
+  --danger: oklch(0.56 0.19 27);
+  --h-green: oklch(0.62 0.15 150); --h-blue: oklch(0.58 0.15 255);
+  --h-violet: oklch(0.56 0.17 295); --h-pink: oklch(0.62 0.18 355);
+  --h-orange: oklch(0.65 0.16 48); --h-amber: oklch(0.70 0.15 75);
+  --h-teal: oklch(0.60 0.10 200); --h-slate: oklch(0.52 0.03 250);
+  --r-card: 18px;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --font-ui: "Figtree", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Bricolage Grotesque", "Figtree", ui-sans-serif, system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0D0F0E; --surface: #161917; --surface-2: #1F2320;
+    --border: #262B27; --border-strong: #3A413B;
+    --text: #ECEFEB; --text-2: #9CA49C; --text-3: #626A63;
+    --track: #262B27; --missed: #4B534C; --off: #1C1F1D;
+    --ink: #ECEFEB; --on-ink: #0D0F0E; --on-c: #0D0F0E;
+    --danger: oklch(0.70 0.17 27);
+    --h-green: oklch(0.76 0.15 150); --h-blue: oklch(0.73 0.13 255);
+    --h-violet: oklch(0.72 0.14 295); --h-pink: oklch(0.75 0.15 355);
+    --h-orange: oklch(0.76 0.14 50); --h-amber: oklch(0.82 0.14 80);
+    --h-teal: oklch(0.76 0.10 200); --h-slate: oklch(0.72 0.03 250);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0D0F0E; --surface: #161917; --surface-2: #1F2320;
+  --border: #262B27; --border-strong: #3A413B;
+  --text: #ECEFEB; --text-2: #9CA49C; --text-3: #626A63;
+  --track: #262B27; --missed: #4B534C; --off: #1C1F1D;
+  --ink: #ECEFEB; --on-ink: #0D0F0E; --on-c: #0D0F0E;
+  --danger: oklch(0.70 0.17 27);
+  --h-green: oklch(0.76 0.15 150); --h-blue: oklch(0.73 0.13 255);
+  --h-violet: oklch(0.72 0.14 295); --h-pink: oklch(0.75 0.15 355);
+  --h-orange: oklch(0.76 0.14 50); --h-amber: oklch(0.82 0.14 80);
+  --h-teal: oklch(0.76 0.10 200); --h-slate: oklch(0.72 0.03 250);
+}
+
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 15px/1.45 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+button:disabled { cursor: default; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+h1, h2 { text-wrap: balance; }
+
+/* ---------- shell ---------- */
+.app { min-height: 100%; }
+main { padding-block: 22px calc(104px + env(safe-area-inset-bottom, 0px)); padding-inline: 16px; max-width: 560px; margin: 0 auto; }
+.view { display: flex; flex-direction: column; }
+
+.nav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: flex; justify-content: space-around;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border-top: 1px solid var(--border);
+}
+.nav-brand, .nav-foot { display: none; }
+.nav-item {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  min-width: 76px; padding: 6px 12px; border: 0; border-radius: 12px; background: none;
+  font-size: 11.5px; font-weight: 600; color: var(--text-3);
+}
+.nav-item svg { width: 24px; height: 24px; }
+.nav-item[aria-current="page"] { color: var(--text); }
+
+@media (min-width: 900px) {
+  .app { display: grid; grid-template-columns: 236px 1fr; }
+  .nav {
+    position: sticky; top: 0; height: 100dvh; box-sizing: border-box; flex-direction: column; justify-content: flex-start; gap: 2px;
+    padding: 28px 16px; background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none;
+    border-top: 0; border-right: 1px solid var(--border);
+  }
+  .nav-brand { display: flex; align-items: center; gap: 10px; margin: 0 8px 28px; font: 650 22px/1 var(--font-display); letter-spacing: -.02em; }
+  .nav-item { flex-direction: row; gap: 12px; width: 100%; min-width: 0; padding: 10px 12px; font-size: 15px; font-weight: 500; color: var(--text-2); }
+  .nav-item svg { width: 20px; height: 20px; }
+  .nav-item[aria-current="page"] { background: var(--surface); box-shadow: 0 0 0 1px var(--border); color: var(--text); }
+  .nav-foot { display: block; margin: auto 8px 0; font-size: 12.5px; line-height: 1.5; color: var(--text-3); }
+  main { width: 100%; box-sizing: border-box; padding-block: 44px 64px; padding-inline: 40px; max-width: 640px; }
+  main.wide { max-width: 860px; }
+}
+.logo { width: 28px; height: 28px; border-radius: 9px; background: var(--ink); display: grid; place-items: center; }
+.logo svg { width: 16px; height: 16px; stroke: var(--on-ink); stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- shared ---------- */
+.head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-2); }
+h1 { margin: 3px 0 0; font: 650 30px/1.08 var(--font-display); letter-spacing: -.025em; }
+.sub { margin-top: 4px; font-size: 14px; color: var(--text-2); }
+h2 { margin: 0; font: 600 18px/1.2 var(--font-display); letter-spacing: -.01em; }
+.sec { margin: 24px 4px 10px; font-size: 12px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
+.hint { margin: 18px 4px 0; font-size: 13px; color: var(--text-3); }
+
+.seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--surface-2); align-self: flex-start; }
+.seg button { border: 0; background: none; padding: 7px 16px; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--text-2); }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / .08), 0 0 0 1px var(--border); }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 16px; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.pn { display: flex; gap: 6px; }
+.navbtn { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); }
+.navbtn svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2.2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.navbtn:disabled { opacity: .35; }
+.summary { margin: 14px 2px 0; font-size: 13.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.summary b { color: var(--text); font-weight: 600; }
+
+/* ---------- today ---------- */
+.pring { position: relative; width: 58px; height: 58px; flex: none; }
+.pring svg, .mini { transform: rotate(-90deg); display: block; }
+.trk { stroke: var(--track); }
+.val { stroke: var(--ink); transition: stroke-dashoffset .5s var(--ease), opacity .2s; }
+.pring span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.strip { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; padding: 6px; margin-bottom: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); }
+.sd { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 0 9px; border: 0; border-radius: 12px; background: none; transition: background .2s; }
+.sd .l { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--text-3); }
+.sd .n { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sd[aria-pressed="true"] { background: var(--ink); }
+.sd[aria-pressed="true"] .l, .sd[aria-pressed="true"] .n { color: var(--on-ink); }
+.sd[aria-pressed="true"] .trk { stroke: color-mix(in srgb, var(--on-ink) 25%, transparent); }
+.sd[aria-pressed="true"] .val { stroke: var(--on-ink); }
+
+.notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; padding: 10px 12px 10px 14px; border-radius: 14px; background: var(--surface-2); font-size: 14px; color: var(--text-2); }
+.notice button { border: 0; background: var(--surface); padding: 6px 12px; border-radius: 9px; font-weight: 600; font-size: 13.5px; box-shadow: 0 0 0 1px var(--border); white-space: nowrap; }
+
+.list { display: flex; flex-direction: column; gap: 10px; }
+.card {
+  --tint: color-mix(in oklch, var(--c) 13%, var(--surface));
+  position: relative; display: flex; align-items: center; gap: 14px;
+  min-height: 74px; padding: 14px; border-radius: var(--r-card);
+  background: var(--surface); border: 1px solid var(--border);
+  cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  transition: background .25s var(--ease), border-color .25s var(--ease), transform .12s var(--ease);
+}
+.card:active { transform: scale(.985); }
+.card.done { background: var(--tint); border-color: color-mix(in oklch, var(--c) 32%, var(--surface)); }
+.ico { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 13px; font-size: 22px; background: color-mix(in oklch, var(--c) 14%, var(--surface)); transition: background .25s; }
+.card.done .ico { background: var(--surface); }
+.txt { flex: 1; min-width: 0; }
+.name { font-size: 16.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta { margin-top: 1px; font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.chk { width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 50%; border: 2px solid var(--border-strong); transition: background .2s var(--ease), border-color .2s var(--ease); }
+.chk svg { width: 18px; height: 18px; fill: none; stroke: var(--on-c); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 24; stroke-dashoffset: 24; transition: stroke-dashoffset .24s var(--ease) .06s; }
+.card.done .chk { background: var(--c); border-color: var(--c); }
+.card.done .chk svg { stroke-dashoffset: 0; }
+.card.pop .chk { animation: pop .32s var(--ease); }
+@keyframes pop { 40% { transform: scale(1.16); } 100% { transform: scale(1); } }
+.more { display: none; width: 32px; height: 32px; border: 0; border-radius: 9px; background: none; color: var(--text-3); place-items: center; }
+.more svg { width: 18px; height: 18px; fill: currentColor; }
+@media (hover: hover) {
+  .more { display: grid; opacity: 0; transition: opacity .15s; }
+  .card:hover .more, .more:focus-visible { opacity: 1; }
+  .more:hover { background: var(--surface-2); color: var(--text); }
+}
+.card.off { opacity: .72; }
+.add {
+  display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 58px; margin-top: 10px;
+  border: 1.5px dashed var(--border-strong); border-radius: var(--r-card); background: none; color: var(--text-2); font-weight: 600;
+}
+.add:hover { color: var(--text); border-color: var(--text-3); }
+.empty { padding: 40px 20px; text-align: center; color: var(--text-2); }
+
+/* ---------- calendar ---------- */
+.chips { display: flex; gap: 8px; overflow-x: auto; margin: 14px -16px 16px; padding: 2px 16px 4px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); font-size: 14px; font-weight: 500; }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); margin-bottom: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; }
+.stats > div { padding: 14px 14px 12px; border-left: 1px solid var(--border); min-width: 0; }
+.stats > div:first-child { border-left: 0; }
+.stats b { display: block; font: 650 24px/1.1 var(--font-display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.stats span { display: block; margin-top: 3px; font-size: 12.5px; color: var(--text-2); }
+.meter { height: 4px; margin-top: 8px; border-radius: 2px; background: var(--track); overflow: hidden; }
+.meter i { display: block; height: 100%; border-radius: 2px; background: var(--c); }
+.explain { margin: 0 4px 16px; font-size: 13px; color: var(--text-3); }
+@media (max-width: 420px) {
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .stats > div:nth-child(3) { border-left: 0; }
+  .stats > div:nth-child(n+3) { border-top: 1px solid var(--border); }
+}
+
+.mgrid { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: 6px; }
+.mhead { padding-bottom: 4px; text-align: center; font-size: 11px; font-weight: 700; letter-spacing: .07em; color: var(--text-3); }
+.mc { position: relative; height: 44px; padding: 0; border: 0; background: none; display: grid; place-items: center; }
+.band { position: absolute; top: 5px; bottom: 5px; left: 3px; right: 3px; border-radius: 999px; background: var(--c); }
+.jl .band { left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.jr .band { right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.ln { position: absolute; left: 0; right: 0; top: calc(50% - 1px); height: 2px; background: color-mix(in oklch, var(--c) 50%, transparent); }
+.ln.dash { background: repeating-linear-gradient(90deg, var(--c) 0 4px, transparent 4px 8px); }
+.ln.l { right: 50%; } .ln.r { left: 50%; }
+.num { position: relative; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--surface); font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.s-done .num { background: none; color: var(--on-c); font-weight: 700; }
+.s-missed .num { box-shadow: inset 0 0 0 1.5px var(--missed); color: var(--text-2); }
+.s-pending .num { border: 1.5px dashed var(--c); }
+.s-off .num { color: var(--text-3); }
+.s-future .num, .s-before .num { color: var(--text-3); opacity: .55; }
+.is-today .num::after { content: ""; position: absolute; bottom: 2px; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+
+.mc-all { height: 46px; }
+.mc-all svg { position: absolute; width: 40px; height: 40px; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.mc-all .num { background: none; width: 26px; height: 26px; font-size: 13px; }
+.mc-all.perfect::before { content: ""; position: absolute; inset: 1px 2px; border-radius: 14px; background: color-mix(in oklch, var(--ink) 7%, transparent); }
+.mc-all.perfect .num { font-weight: 700; }
+
+.wk { display: grid; grid-template-columns: minmax(0, 1fr) repeat(7, 34px); column-gap: 4px; row-gap: 10px; align-items: center; }
+.dh { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; color: var(--text-3); text-transform: uppercase; }
+.dh b { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; font-size: 13.5px; letter-spacing: 0; color: var(--text); font-variant-numeric: tabular-nums; }
+.dh.is-today b { background: var(--ink); color: var(--on-ink); }
+.hn { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; font-weight: 500; }
+.hn .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hn .e { font-size: 18px; flex: none; }
+.wc { justify-self: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: none; display: grid; place-items: center; transition: background .2s; }
+.wc svg { width: 16px; height: 16px; fill: none; stroke: var(--on-c); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.wc.s-done { background: var(--c); }
+.wc.s-missed { box-shadow: inset 0 0 0 1.5px var(--missed); }
+.wc.s-pending { border: 1.5px dashed var(--c); }
+.wc.s-off::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: var(--text-3); opacity: .7; }
+@media (max-width: 380px) { .wk { grid-template-columns: minmax(0, 1fr) repeat(7, 30px); column-gap: 2px; } .wc { width: 28px; height: 28px; } }
+
+.ywrap { overflow-x: auto; padding-bottom: 6px; }
+.ygrid { display: grid; grid-auto-flow: column; grid-template-rows: 16px repeat(7, 12px); grid-template-columns: 30px; grid-auto-columns: 12px; gap: 3px; width: max-content; }
+.yl { font-size: 10.5px; line-height: 12px; color: var(--text-3); }
+.ym { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
+.yc { width: 12px; height: 12px; padding: 0; border: 0; border-radius: 3px; background: var(--y, transparent); }
+.yc:not(:disabled):hover { outline: 1.5px solid var(--ink); outline-offset: 1px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 4px 0; font-size: 12.5px; color: var(--text-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.lg { width: 18px; height: 12px; border-radius: 6px; display: inline-block; flex: none; }
+.lg.done { background: var(--c); }
+.lg.missed { width: 12px; box-shadow: inset 0 0 0 1.5px var(--missed); }
+.lg.dash { height: 2px; border-radius: 0; background: repeating-linear-gradient(90deg, var(--c) 0 4px, transparent 4px 8px); }
+.lg.off { width: 12px; background: var(--off); box-shadow: inset 0 0 0 1px var(--border); }
+.lg.sq { width: 12px; border-radius: 3px; }
+
+.chart { margin-top: 16px; }
+.plot { position: relative; height: 120px; margin-left: 38px; }
+.plot .gl { position: absolute; left: 0; right: 0; height: 1px; background: var(--border); }
+.plot .gl span { position: absolute; right: calc(100% + 8px); top: -7px; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.bars { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; align-items: end; }
+.bar { min-height: 3px; border-radius: 6px 6px 2px 2px; background: var(--c); }
+.bar.cur { background: color-mix(in oklch, var(--c) 40%, var(--surface)); }
+.bars-x { display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; margin: 6px 0 0 38px; font-size: 11px; color: var(--text-3); }
+.bars-x span { white-space: nowrap; overflow: visible; }
+
+/* ---------- settings ---------- */
+.glabel { margin: 26px 4px 8px; font-size: 12px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-2); }
+.glabel:first-of-type { margin-top: 4px; }
+.group { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
+.row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-top: 1px solid var(--border); }
+.row:first-child { border-top: 0; }
+.rt { flex: 1; min-width: 0; }
+.rtitle { font-weight: 600; }
+.rs { margin-top: 2px; font-size: 13.5px; color: var(--text-2); }
+.btn-sm { flex: none; border: 0; padding: 8px 14px; border-radius: 10px; background: var(--surface-2); font-size: 14px; font-weight: 600; }
+.btn-sm:hover { background: var(--border); }
+.btn-sm.danger { color: var(--danger); }
+.qr { flex: none; width: 104px; height: 104px; padding: 4px; border-radius: 12px; background: #FFFFFF; box-shadow: 0 0 0 1px var(--border); }
+.qr img, .qr canvas { width: 96px !important; height: 96px !important; display: block; }
+.linkrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.linkrow code { font: 500 13px/1.3 ui-monospace, "SF Mono", Menlo, monospace; color: var(--text); user-select: all; word-break: break-all; }
+.row.invite { align-items: flex-start; }
+@media (max-width: 420px) { .row.invite { flex-direction: column; } }
+.foot { margin: 26px 4px 0; font-size: 12.5px; color: var(--text-3); }
+
+/* ---------- sheet & toast ---------- */
+.scrim { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-end; justify-content: center; background: rgb(8 10 9 / .38); animation: fade .2s ease; }
+.sheet {
+  width: 100%; max-width: 520px; max-height: 90dvh; overflow: auto;
+  padding: 22px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+  background: var(--surface); border-radius: 24px 24px 0 0; animation: up .3s var(--ease);
+  display: flex; flex-direction: column; gap: 18px;
+}
+@media (min-width: 700px) { .scrim { align-items: center; } .sheet { max-width: 440px; border-radius: 24px; } }
+@keyframes fade { from { opacity: 0; } }
+@keyframes up { from { transform: translateY(40px); opacity: 0; } }
+.grab { width: 36px; height: 4px; margin: -10px auto -6px; border-radius: 2px; background: var(--border-strong); }
+@media (min-width: 700px) { .grab { display: none; } }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; }
+.x { width: 34px; height: 34px; border: 0; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; }
+.x svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+.field { display: flex; flex-direction: column; gap: 8px; }
+.flabel { font-size: 12px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-2); }
+.text-in { width: 100%; box-sizing: border-box; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: 17px; }
+.text-in:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+.emojis { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.emo { aspect-ratio: 1; border: 0; border-radius: 10px; background: var(--surface-2); font-size: 20px; }
+.emo[aria-pressed="true"] { background: var(--surface); box-shadow: inset 0 0 0 2px var(--ink); }
+.swatches { display: flex; flex-wrap: wrap; gap: 12px; }
+.sw { width: 30px; height: 30px; border: 0; border-radius: 50%; background: var(--c); }
+.sw[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--c); }
+.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.dy { height: 38px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); font-size: 13px; font-weight: 600; }
+.dy[aria-pressed="true"] { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+.err { margin: -8px 0 0; font-size: 13.5px; color: var(--danger); }
+.btn-primary { height: 50px; border: 0; border-radius: 14px; background: var(--ink); color: var(--on-ink); font-size: 16px; font-weight: 600; }
+.btn-row { display: flex; gap: 10px; }
+.btn-row .btn-sm { flex: 1; height: 44px; }
+
+#toast {
+  position: fixed; left: 50%; bottom: calc(92px + env(safe-area-inset-bottom, 0px)); z-index: 50;
+  display: flex; align-items: center; gap: 14px; max-width: calc(100% - 32px); box-sizing: border-box;
+  padding: 11px 12px 11px 16px; border-radius: 14px; background: var(--ink); color: var(--on-ink);
+  font-size: 14px; font-weight: 500; transform: translateX(-50%); animation: up .25s var(--ease);
+  box-shadow: 0 8px 28px rgb(0 0 0 / .18);
+}
+#toast[hidden] { display: none; }
+#toast button { border: 0; background: color-mix(in srgb, var(--on-ink) 16%, transparent); color: var(--on-ink); padding: 6px 12px; border-radius: 9px; font-weight: 700; font-size: 13.5px; }
+@media (min-width: 900px) { #toast { bottom: 32px; left: calc(50% + 118px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+
+<div class="app">
+  <nav class="nav" aria-label="Main">
+    <div class="nav-brand"><span class="logo"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>tick</div>
+    <button class="nav-item" data-tab="today" aria-current="page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.3l2.7 2.7L16 9.7"/></svg>Today
+    </button>
+    <button class="nav-item" data-tab="calendar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>Calendar
+    </button>
+    <button class="nav-item" data-tab="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>Settings
+    </button>
+    <p class="nav-foot">Everything you track stays on this device.<br>Mockup with sample history.</p>
+  </nav>
+  <main id="main">
+    <section id="view-today" class="view" aria-label="Today"></section>
+    <section id="view-calendar" class="view" aria-label="Calendar" hidden></section>
+    <section id="view-settings" class="view" aria-label="Settings" hidden></section>
+  </main>
+</div>
+<div id="toast" role="status" hidden></div>
+
+<script>
+(() => {
+  // ---------- dates (local calendar days, never UTC) ----------
+  const pad = n => String(n).padStart(2, '0');
+  const key = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const parse = k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); };
+  const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayKey = key(today);
+  const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const DAY_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const MON_SHORT = MONTHS.map(m => m.slice(0, 3));
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const $ = (s, r = document) => r.querySelector(s);
+
+  const APP_URL = 'https://debashis9.github.io/tick/';
+  const CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+  const CHEV_L = '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>';
+  const CHEV_R = '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+  const DOTS = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
+  const X = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+  const S = {
+    tab: 'today', selDate: todayKey, weekStart: 1, theme: 'system',
+    cal: { zoom: 'month', filter: 'all', month: new Date(today.getFullYear(), today.getMonth(), 1), weekOf: null },
+  };
+  const weekIdx = d => (d.getDay() - S.weekStart + 7) % 7;
+  const startOfWeek = d => addDays(d, -weekIdx(d));
+  const orderedDays = () => [0, 1, 2, 3, 4, 5, 6].map(i => (S.weekStart + i) % 7);
+
+  const COLORS = ['green', 'blue', 'violet', 'pink', 'orange', 'amber', 'teal', 'slate'];
+  const ICONS = ['🏃', '📖', '🧘', '💧', '💪', '🥗', '✍️', '🎸', '🛌', '🌱', '💊', '🧹', '📵', '☀️', '🧠', '🚴'];
+
+  // ---------- sample state ----------
+  let habits = [
+    { id: 'walk', name: 'Walk / Jog / Run', icon: '🏃', color: 'green', schedule: { type: 'daily', days: [] }, createdOn: key(addDays(today, -160)), archived: false },
+    { id: 'read', name: 'Read a book', icon: '📖', color: 'blue', schedule: { type: 'daily', days: [] }, createdOn: key(addDays(today, -120)), archived: false },
+    { id: 'med', name: 'Meditate', icon: '🧘', color: 'violet', schedule: { type: 'days', days: [1, 3, 5] }, createdOn: key(addDays(today, -75)), archived: false },
+  ];
+  let checks = new Set();
+  const ck = (id, k) => id + '|' + k;
+  const isDone = (h, k) => checks.has(ck(h.id, k));
+  const active = () => habits.filter(h => !h.archived);
+  const byId = id => habits.find(h => h.id === id);
+
+  function isScheduled(h, d) {
+    if (key(d) < h.createdOn) return false;
+    return h.schedule.type === 'daily' || h.schedule.days.includes(d.getDay());
+  }
+  function state(h, d) {
+    const k = key(d);
+    if (k > todayKey) return 'future';
+    if (k < h.createdOn) return 'before';
+    if (isDone(h, k)) return 'done';
+    if (!isScheduled(h, d)) return 'off';
+    return k === todayKey ? 'pending' : 'missed';
+  }
+
+  (function seed() {
+    let s = 20260928;
+    const rand = () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+    const prof = { walk: [.72, .88], read: [.55, .9], med: [.6, .82] };
+    habits.forEach(h => {
+      const start = parse(h.createdOn);
+      const total = Math.round((today - start) / 864e5);
+      let prevMiss = false;
+      for (let i = 0; i < total; i++) {
+        const d = addDays(start, i);
+        if (!isScheduled(h, d)) continue;
+        let p = prof[h.id][0] + (prof[h.id][1] - prof[h.id][0]) * (i / total);
+        if (prevMiss) p -= .2;
+        if (h.id === 'walk' && total - i > 38 && total - i <= 44) p = .05;
+        const done = rand() < p;
+        if (done) checks.add(ck(h.id, key(d)));
+        prevMiss = !done;
+      }
+    });
+    checks.add(ck('walk', todayKey));
+  })();
+
+  // ---------- stats ----------
+  function stats(h) {
+    const m = Math.pow(0.5, 1 / 13);
+    let score = 0, run = 0, best = 0;
+    for (let d = parse(h.createdOn); d <= today; d = addDays(d, 1)) {
+      const s = state(h, d);
+      if (s === 'done') { score = score * m + (1 - m); run++; if (run > best) best = run; }
+      else if (s === 'missed') { score *= m; run = 0; }
+    }
+    let dn = 0, sc = 0;
+    for (let i = 0; i < 30; i++) {
+      const s = state(h, addDays(today, -i));
+      if (s === 'done') { dn++; sc++; } else if (s === 'missed') sc++;
+    }
+    return { strength: Math.round(score * 100), streak: run, best, rate: sc ? Math.round(dn / sc * 100) : 0 };
+  }
+  function dayProgress(k) {
+    const d = parse(k);
+    const list = active().filter(h => isScheduled(h, d));
+    return { done: list.filter(h => isDone(h, k)).length, total: list.length };
+  }
+  const scheduleText = h => h.schedule.type === 'daily' ? 'Every day'
+    : orderedDays().filter(x => h.schedule.days.includes(x)).map(x => DAY_SHORT[x]).join(', ');
+  function metaText(h) {
+    const st = stats(h);
+    const parts = [];
+    if (h.schedule.type !== 'daily') parts.push(scheduleText(h));
+    parts.push(st.streak >= 2 ? `${st.streak} in a row` : `Strength ${st.strength}%`);
+    return parts.join(' · ');
+  }
+  const stateLabel = { done: 'done', missed: 'missed', off: 'not scheduled', pending: 'not done yet', future: 'upcoming', before: 'before this habit started' };
+
+  function ringSVG(size, sw, frac, cls = '') {
+    const r = (size - sw) / 2, c = 2 * Math.PI * r, h = size / 2;
+    return `<svg class="${cls}" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
+      <circle class="trk" cx="${h}" cy="${h}" r="${r}" fill="none" stroke-width="${sw}"/>
+      <circle class="val" cx="${h}" cy="${h}" r="${r}" fill="none" stroke-width="${sw}" stroke-linecap="round"
+        stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - frac)}" style="opacity:${frac > 0 ? 1 : 0}"/></svg>`;
+  }
+
+  // ---------- toast ----------
+  let toastTimer;
+  function toast(msg, undo) {
+    const t = $('#toast');
+    t.innerHTML = `<span>${esc(msg)}</span>${undo ? '<button type="button">Undo</button>' : ''}`;
+    t.hidden = false;
+    t.style.animation = 'none'; void t.offsetWidth; t.style.animation = '';
+    if (undo) t.querySelector('button').onclick = () => { undo(); t.hidden = true; };
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.hidden = true; }, 4000);
+  }
+  function toggle(h, k) {
+    const id = ck(h.id, k);
+    if (checks.has(id)) {
+      checks.delete(id);
+      toast(`Unticked ${h.name}`, () => { checks.add(id); render(); });
+      return false;
+    }
+    checks.add(id);
+    return true;
+  }
+
+  // ---------- today ----------
+  function cardHTML(h, k, off = false) {
+    const done = isDone(h, k);
+    return `<div class="card${done ? ' done' : ''}${off ? ' off' : ''}" role="button" tabindex="0" aria-pressed="${done}"
+      data-id="${h.id}" data-date="${k}" style="--c:var(--h-${h.color})">
+      <div class="ico" aria-hidden="true">${h.icon}</div>
+      <div class="txt"><div class="name">${esc(h.name)}</div><div class="meta">${off ? 'Not scheduled · ' + scheduleText(h) : metaText(h)}</div></div>
+      <button class="more" type="button" data-edit="${h.id}" aria-label="Edit ${esc(h.name)}">${DOTS}</button>
+      <div class="chk" aria-hidden="true">${CHECK}</div>
+    </div>`;
+  }
+  function subText(p, isToday) {
+    if (!p.total) return 'Nothing scheduled';
+    if (p.done === p.total) return isToday ? 'All done today' : 'All done that day';
+    return isToday ? `${p.total - p.done} to go` : `${p.done} of ${p.total} done`;
+  }
+  function stripHTML() {
+    let out = '';
+    for (let i = 6; i >= 0; i--) {
+      const d = addDays(today, -i), k = key(d), p = dayProgress(k);
+      out += `<button class="sd" type="button" data-day="${k}" aria-pressed="${k === S.selDate}"
+        aria-label="${DAY_LONG[d.getDay()]} ${d.getDate()}: ${p.done} of ${p.total} done">
+        <span class="l">${DAY_SHORT[d.getDay()][0]}</span><span class="n">${d.getDate()}</span>${ringSVG(18, 3, p.total ? p.done / p.total : 0, 'mini')}</button>`;
+    }
+    return out;
+  }
+  function renderToday() {
+    const v = $('#view-today');
+    const k = S.selDate, d = parse(k), isToday = k === todayKey;
+    const p = dayProgress(k);
+    const list = active().filter(h => k >= h.createdOn);
+    const due = list.filter(h => isScheduled(h, d));
+    const rest = list.filter(h => !isScheduled(h, d));
+    v.innerHTML = `
+      <header class="head">
+        <div>
+          <div class="eyebrow">${isToday ? DAY_LONG[d.getDay()] : 'Editing ' + DAY_LONG[d.getDay()]}</div>
+          <h1>${d.getDate()} ${MONTHS[d.getMonth()]}</h1>
+          <div class="sub" id="today-sub">${subText(p, isToday)}</div>
+        </div>
+        <div class="pring" id="pring" role="img" aria-label="${p.done} of ${p.total} done">${ringSVG(58, 5, p.total ? p.done / p.total : 0)}<span>${p.done}/${p.total}</span></div>
+      </header>
+      <div class="strip" id="strip">${stripHTML()}</div>
+      ${isToday ? '' : `<div class="notice">You're editing a past day.<button type="button" data-act="today">Back to today</button></div>`}
+      ${list.length ? `<div class="list">${due.map(h => cardHTML(h, k)).join('')}</div>` :
+        `<div class="empty"><h2>No habits yet</h2><p>Add the first thing you want to keep doing.</p></div>`}
+      ${rest.length ? `<div class="sec">Not scheduled ${isToday ? 'today' : 'that day'}</div><div class="list">${rest.map(h => cardHTML(h, k, true)).join('')}</div>` : ''}
+      <button class="add" type="button" data-act="new"><span aria-hidden="true">+</span> New habit</button>
+      <p class="hint">Tap a habit to tick it. Press and hold to edit it.</p>`;
+  }
+  function refreshTodayHeader() {
+    const p = dayProgress(S.selDate), frac = p.total ? p.done / p.total : 0;
+    const ring = $('#pring'); if (!ring) return;
+    const val = ring.querySelector('.val');
+    const c = parseFloat(val.getAttribute('stroke-dasharray'));
+    val.setAttribute('stroke-dashoffset', c * (1 - frac));
+    val.style.opacity = frac > 0 ? 1 : 0;
+    ring.querySelector('span').textContent = `${p.done}/${p.total}`;
+    ring.setAttribute('aria-label', `${p.done} of ${p.total} done`);
+    $('#today-sub').textContent = subText(p, S.selDate === todayKey);
+    $('#strip').innerHTML = stripHTML();
+  }
+
+  // long-press to edit
+  let lpTimer = null, lpFired = false;
+  const todayView = $('#view-today');
+  todayView.addEventListener('pointerdown', e => {
+    const card = e.target.closest('.card');
+    if (!card || e.target.closest('.more')) return;
+    lpFired = false;
+    lpTimer = setTimeout(() => { lpFired = true; navigator.vibrate?.(15); openEditor(card.dataset.id); }, 520);
+  });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(t => todayView.addEventListener(t, () => clearTimeout(lpTimer)));
+  todayView.addEventListener('contextmenu', e => { if (e.target.closest('.card')) e.preventDefault(); });
+  todayView.addEventListener('keydown', e => {
+    const card = e.target.closest('.card');
+    if (card && e.target === card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); card.click(); }
+  });
+  todayView.addEventListener('click', e => {
+    const t = e.target;
+    const edit = t.closest('[data-edit]');
+    if (edit) return openEditor(edit.dataset.edit);
+    const day = t.closest('[data-day]');
+    if (day) { S.selDate = day.dataset.day; return renderToday(); }
+    const act = t.closest('[data-act]');
+    if (act?.dataset.act === 'today') { S.selDate = todayKey; return renderToday(); }
+    if (act?.dataset.act === 'new') return openEditor(null);
+    const card = t.closest('.card');
+    if (!card) return;
+    if (lpFired) { lpFired = false; return; }
+    const h = byId(card.dataset.id);
+    const done = toggle(h, card.dataset.date);
+    card.classList.toggle('done', done);
+    card.setAttribute('aria-pressed', done);
+    if (done) { card.classList.remove('pop'); void card.offsetWidth; card.classList.add('pop'); navigator.vibrate?.(8); }
+    if (!card.classList.contains('off')) card.querySelector('.meta').textContent = metaText(h);
+    refreshTodayHeader();
+  });
+
+  // ---------- calendar ----------
+  function bridge(h, d) {
+    // A run of non-done days between two done days: thin line if nothing was missed, dashed if exactly one miss.
+    let miss = 0, x = d, sx;
+    for (;;) { sx = state(h, x); if (sx === 'missed') miss++; else if (sx !== 'off') break; if (miss > 1) return null; x = addDays(x, -1); }
+    if (sx !== 'done') return null;
+    let y = addDays(d, 1), sy;
+    for (;;) { sy = state(h, y); if (sy === 'missed') miss++; else if (sy !== 'off') break; if (miss > 1) return null; y = addDays(y, 1); }
+    if (sy !== 'done') return null;
+    return miss === 0 ? 'thin' : 'dash';
+  }
+  function monthHead() {
+    const m0 = S.cal.month;
+    const isCur = m0.getFullYear() === today.getFullYear() && m0.getMonth() === today.getMonth();
+    return `<div class="panel-head"><h2>${MONTHS[m0.getMonth()]} ${m0.getFullYear()}</h2>
+      <div class="pn"><button class="navbtn" type="button" data-nav="-1" aria-label="Previous month">${CHEV_L}</button>
+      <button class="navbtn" type="button" data-nav="1" aria-label="Next month" ${isCur ? 'disabled' : ''}>${CHEV_R}</button></div></div>`;
+  }
+  function monthGridStart() {
+    const m0 = S.cal.month;
+    let out = orderedDays().map(dw => `<div class="mhead">${DAY_SHORT[dw].toUpperCase()}</div>`).join('');
+    for (let i = 0; i < weekIdx(m0); i++) out += '<div></div>';
+    return out;
+  }
+  function monthSingleHTML(h) {
+    const m0 = S.cal.month, y = m0.getFullYear(), mo = m0.getMonth();
+    const nd = new Date(y, mo + 1, 0).getDate();
+    let cells = monthGridStart(), doneN = 0, schedN = 0, run = 0, bestRun = 0;
+    for (let day = 1; day <= nd; day++) {
+      const d = new Date(y, mo, day), k = key(d), s = state(h, d);
+      let cls = `mc s-${s}${k === todayKey ? ' is-today' : ''}`, inner = '';
+      if (s === 'done') {
+        doneN++; schedN++; run++; bestRun = Math.max(bestRun, run);
+        const ps = day > 1 ? state(h, addDays(d, -1)) : null;
+        const ns = day < nd ? state(h, addDays(d, 1)) : null;
+        if (ps === 'done') cls += ' jl';
+        else if (ps === 'off' || ps === 'missed') { const b = bridge(h, addDays(d, -1)); if (b) inner += `<i class="ln l ${b}"></i>`; }
+        if (ns === 'done') cls += ' jr';
+        else if (ns === 'off' || ns === 'missed') { const b = bridge(h, addDays(d, 1)); if (b) inner += `<i class="ln r ${b}"></i>`; }
+        inner += '<i class="band"></i>';
+      } else if (s === 'off' || s === 'missed') {
+        if (s === 'missed') { schedN++; run = 0; }
+        const b = bridge(h, d); if (b) inner += `<i class="ln ${b}"></i>`;
+      }
+      const dis = s === 'future' || s === 'before';
+      cells += `<button class="${cls}" type="button" data-h="${h.id}" data-date="${k}" ${dis ? 'disabled' : ''}
+        aria-label="${DAY_LONG[d.getDay()]} ${day} ${MONTHS[mo]}: ${esc(h.name)}, ${stateLabel[s]}">${inner}<span class="num">${day}</span></button>`;
+    }
+    const summary = schedN ? `<p class="summary"><b>${doneN}</b> of ${schedN} due days done · longest run this month <b>${bestRun}</b></p>` : `<p class="summary">No due days this month.</p>`;
+    return `<div class="panel" style="--c:var(--h-${h.color})">${monthHead()}<div class="mgrid">${cells}</div>${summary}</div>
+      <div class="legend" style="--c:var(--h-${h.color})"><span><i class="lg done"></i>Done</span><span><i class="lg missed"></i>Missed</span>
+      <span><i class="lg dash"></i>One miss between done days</span><span><i class="lg off"></i>Not scheduled</span></div>`;
+  }
+  function monthAllHTML() {
+    const m0 = S.cal.month, y = m0.getFullYear(), mo = m0.getMonth();
+    const nd = new Date(y, mo + 1, 0).getDate();
+    const list = active(), many = list.length > 6;
+    let cells = monthGridStart(), perfect = 0, dueDays = 0;
+    for (let day = 1; day <= nd; day++) {
+      const d = new Date(y, mo, day), k = key(d);
+      if (k > todayKey) {
+        cells += `<button class="mc mc-all s-future" type="button" disabled><span class="num">${day}</span></button>`;
+        continue;
+      }
+      const due = list.filter(h => isScheduled(h, d));
+      const done = due.filter(h => isDone(h, k));
+      const isPerfect = due.length > 0 && done.length === due.length;
+      if (due.length) dueDays++;
+      if (isPerfect) perfect++;
+      let svg = '';
+      if (due.length && many) {
+        svg = `<svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17" fill="var(--ink)" fill-opacity="${(done.length / due.length) * .85}"/></svg>`;
+      } else if (due.length) {
+        const r = 17, c = 2 * Math.PI * r, gap = due.length > 1 ? 3.4 : 0, seg = (c - gap * due.length) / due.length;
+        svg = `<svg viewBox="0 0 40 40" aria-hidden="true">${due.map((h, i) =>
+          `<circle cx="20" cy="20" r="${r}" fill="none" stroke-width="3.6" stroke="${isDone(h, k) ? `var(--h-${h.color})` : 'var(--track)'}"
+            stroke-dasharray="${seg} ${c - seg}" stroke-dashoffset="${-i * (seg + gap)}" transform="rotate(-90 20 20)"/>`).join('')}</svg>`;
+      }
+      cells += `<button class="mc mc-all${isPerfect ? ' perfect' : ''}${k === todayKey ? ' is-today' : ''}" type="button" data-dayall="${k}"
+        aria-label="${DAY_LONG[d.getDay()]} ${day} ${MONTHS[mo]}: ${done.length} of ${due.length} done">${svg}<span class="num"${many && done.length / (due.length || 1) > .5 ? ' style="color:var(--on-ink)"' : ''}>${day}</span></button>`;
+    }
+    return `<div class="panel">${monthHead()}<div class="mgrid">${cells}</div>
+      <p class="summary"><b>${perfect}</b> of ${dueDays} days with everything done. Tap a day to see or change it.</p></div>
+      <div class="legend">${list.map(h => `<span style="--c:var(--h-${h.color})"><i class="lg done sq"></i>${esc(h.name)}</span>`).join('')}
+      <span><i class="lg sq" style="background:var(--track)"></i>Due, not done</span></div>`;
+  }
+  function weekHTML(h) {
+    const cur = startOfWeek(today);
+    const ws = S.cal.weekOf || cur;
+    const days = [0, 1, 2, 3, 4, 5, 6].map(i => addDays(ws, i));
+    const isCur = key(ws) === key(cur);
+    const label = `${days[0].getDate()} ${MON_SHORT[days[0].getMonth()]} – ${days[6].getDate()} ${MON_SHORT[days[6].getMonth()]}`;
+    const list = h ? [h] : active();
+    let grid = '<div></div>' + days.map(d => `<div class="dh${key(d) === todayKey ? ' is-today' : ''}">${DAY_SHORT[d.getDay()]}<b>${d.getDate()}</b></div>`).join('');
+    list.forEach(hb => {
+      grid += `<div class="hn"><span class="e" aria-hidden="true">${hb.icon}</span><span class="t">${esc(hb.name)}</span></div>`;
+      grid += days.map(d => {
+        const s = state(hb, d);
+        const dis = s === 'future' || s === 'before';
+        return `<button class="wc s-${s}" type="button" style="--c:var(--h-${hb.color})" data-h="${hb.id}" data-date="${key(d)}" ${dis ? 'disabled' : ''}
+          aria-label="${DAY_LONG[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}: ${esc(hb.name)}, ${stateLabel[s]}">${s === 'done' ? CHECK : ''}</button>`;
+      }).join('');
+    });
+    let dn = 0, due = 0;
+    list.forEach(hb => days.forEach(d => { const s = state(hb, d); if (s === 'done') { dn++; due++; } else if (s === 'missed' || s === 'pending') due++; }));
+    return `<div class="panel"><div class="panel-head"><h2>${isCur ? 'This week' : label}</h2>
+      <div class="pn"><button class="navbtn" type="button" data-wnav="-1" aria-label="Previous week">${CHEV_L}</button>
+      <button class="navbtn" type="button" data-wnav="1" aria-label="Next week" ${isCur ? 'disabled' : ''}>${CHEV_R}</button></div></div>
+      <div class="wk">${grid}</div>
+      <p class="summary"><b>${dn}</b> of ${due} ticks so far${isCur ? ' this week' : ''}. Tap any past day to fix it.</p></div>
+      <div class="legend" style="--c:var(--h-${(h || active()[0] || { color: 'slate' }).color})"><span><i class="lg done sq" style="border-radius:50%"></i>Done</span>
+      <span><i class="lg missed" style="border-radius:50%"></i>Missed</span><span><i class="lg" style="width:4px;height:4px;background:var(--text-3)"></i>Not scheduled</span></div>`;
+  }
+  function yearHTML(h) {
+    const endW = startOfWeek(today), startW = addDays(endW, -52 * 7);
+    const list = active();
+    const lv = [0, 22, 42, 66, 92];
+    let out = '<div></div>' + [0, 1, 2, 3, 4, 5, 6].map(i => `<div class="yl">${i % 2 === 0 && i < 6 ? DAY_SHORT[(S.weekStart + i) % 7] : ''}</div>`).join('');
+    let total = 0;
+    for (let w = 0; w <= 52; w++) {
+      const ws = addDays(startW, w * 7);
+      let label = '';
+      for (let i = 0; i < 7; i++) { const d = addDays(ws, i); if (d.getDate() === 1) label = MON_SHORT[d.getMonth()]; }
+      out += `<div class="ym">${label}</div>`;
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(ws, i), k = key(d);
+        let bg = 'transparent', lab = '';
+        if (k > todayKey) { out += '<button class="yc" type="button" disabled aria-hidden="true" tabindex="-1"></button>'; continue; }
+        if (h) {
+          const s = state(h, d);
+          bg = s === 'done' ? 'var(--c)' : s === 'missed' ? 'var(--track)' : s === 'off' ? 'var(--off)' : 'transparent';
+          if (s === 'done') total++;
+          lab = stateLabel[s];
+        } else {
+          const due = list.filter(x => isScheduled(x, d));
+          const dn = due.filter(x => isDone(x, k)).length;
+          if (due.length) {
+            const f = dn / due.length;
+            if (f === 1) total++;
+            const l = f === 0 ? 0 : f < .34 ? 1 : f < .67 ? 2 : f < 1 ? 3 : 4;
+            bg = l === 0 ? 'var(--track)' : `color-mix(in oklch, var(--ink) ${lv[l]}%, var(--surface))`;
+          }
+          lab = `${dn} of ${due.length} done`;
+        }
+        out += `<button class="yc" type="button" style="--y:${bg}" data-jump="${k}" aria-label="${d.getDate()} ${MONTHS[d.getMonth()]}: ${lab}"></button>`;
+      }
+    }
+    const legend = h
+      ? `<span><i class="lg sq done"></i>Done</span><span><i class="lg sq" style="background:var(--track)"></i>Missed</span><span><i class="lg sq off"></i>Not scheduled</span>`
+      : `<span>Less</span>${lv.map((p, i) => `<i class="lg sq" style="background:${i === 0 ? 'var(--track)' : `color-mix(in oklch, var(--ink) ${p}%, var(--surface))`}"></i>`).join('')}<span>More</span>`;
+    return `<div class="panel" ${h ? `style="--c:var(--h-${h.color})"` : ''}><div class="panel-head"><h2>Last 12 months</h2></div>
+      <div class="ywrap" id="ywrap"><div class="ygrid">${out}</div></div>
+      <p class="summary">${h ? `Done on <b>${total}</b> days in the last 12 months.` : `<b>${total}</b> days with everything done in the last 12 months.`} Tap a square to open its month.</p></div>
+      <div class="legend" ${h ? `style="--c:var(--h-${h.color})"` : ''}>${legend}</div>`;
+  }
+  function statsHTML(h) {
+    const st = stats(h);
+    return `<div class="stats" style="--c:var(--h-${h.color})">
+      <div><b>${st.strength}%</b><span>Strength</span><div class="meter"><i style="width:${st.strength}%"></i></div></div>
+      <div><b>${st.streak}</b><span>Current run</span></div>
+      <div><b>${st.best}</b><span>Best run</span></div>
+      <div><b>${st.rate}%</b><span>Last 30 days</span></div></div>
+      <p class="explain">Strength counts every tick since you started, with recent days weighted most. A single missed day only lowers it a little.</p>`;
+  }
+  function barsHTML(h) {
+    const cur = startOfWeek(today);
+    let bars = '', xs = '';
+    for (let i = 11; i >= 0; i--) {
+      const ws = addDays(cur, -7 * i);
+      let dn = 0, due = 0;
+      for (let j = 0; j < 7; j++) { const s = state(h, addDays(ws, j)); if (s === 'done') { dn++; due++; } else if (s === 'missed') due++; }
+      const pct = due ? Math.round(dn / due * 100) : 0;
+      bars += `<div class="bar${i === 0 ? ' cur' : ''}" style="height:${pct}%" title="Week of ${ws.getDate()} ${MON_SHORT[ws.getMonth()]}: ${dn} of ${due} (${pct}%)"></div>`;
+      xs += `<span>${i === 0 ? 'Now' : i % 4 === 3 ? `${ws.getDate()} ${MON_SHORT[ws.getMonth()]}` : ''}</span>`;
+    }
+    return `<div class="panel chart" style="--c:var(--h-${h.color})"><div class="panel-head"><h2>Weekly completion</h2></div>
+      <div class="plot"><div class="gl" style="top:0"><span>100%</span></div><div class="gl" style="top:50%"><span>50%</span></div><div class="gl" style="top:100%"><span>0%</span></div>
+      <div class="bars">${bars}</div></div><div class="bars-x">${xs}</div></div>`;
+  }
+  function renderCalendar() {
+    const v = $('#view-calendar');
+    let h = S.cal.filter === 'all' ? null : byId(S.cal.filter);
+    if (S.cal.filter !== 'all' && (!h || h.archived)) { S.cal.filter = 'all'; h = null; }
+    const chip = (id, label, color, icon) => `<button class="chip" type="button" data-filter="${id}" aria-pressed="${S.cal.filter === id}">
+      ${color ? `<i class="dot" style="--c:var(--h-${color})"></i>` : ''}${icon ? `<span aria-hidden="true">${icon}</span>` : ''}${esc(label)}</button>`;
+    const view = S.cal.zoom === 'week' ? weekHTML(h) : S.cal.zoom === 'year' ? yearHTML(h) : h ? monthSingleHTML(h) : monthAllHTML();
+    v.innerHTML = `
+      <header class="head"><div><div class="eyebrow">History</div><h1>Calendar</h1></div></header>
+      <div class="seg" role="group" aria-label="Time range">${['week', 'month', 'year'].map(z =>
+        `<button type="button" data-zoom="${z}" aria-pressed="${S.cal.zoom === z}">${z[0].toUpperCase() + z.slice(1)}</button>`).join('')}</div>
+      <div class="chips" role="group" aria-label="Habits">${chip('all', 'All habits')}${active().map(x => chip(x.id, x.name, null, x.icon)).join('')}</div>
+      ${h ? statsHTML(h) : ''}
+      ${view}
+      ${h ? barsHTML(h) : ''}`;
+    const yw = $('#ywrap'); if (yw) yw.scrollLeft = yw.scrollWidth;
+  }
+  $('#view-calendar').addEventListener('click', e => {
+    const t = e.target;
+    const z = t.closest('[data-zoom]'); if (z) { S.cal.zoom = z.dataset.zoom; return renderCalendar(); }
+    const f = t.closest('[data-filter]'); if (f) { S.cal.filter = f.dataset.filter; return renderCalendar(); }
+    const n = t.closest('[data-nav]');
+    if (n) { const m = S.cal.month; S.cal.month = new Date(m.getFullYear(), m.getMonth() + Number(n.dataset.nav), 1); return renderCalendar(); }
+    const wn = t.closest('[data-wnav]');
+    if (wn) { S.cal.weekOf = addDays(S.cal.weekOf || startOfWeek(today), 7 * Number(wn.dataset.wnav)); return renderCalendar(); }
+    const j = t.closest('[data-jump]');
+    if (j) { const d = parse(j.dataset.jump); S.cal.month = new Date(d.getFullYear(), d.getMonth(), 1); S.cal.zoom = 'month'; return renderCalendar(); }
+    const da = t.closest('[data-dayall]'); if (da) return openDaySheet(da.dataset.dayall);
+    const c = t.closest('[data-h][data-date]');
+    if (c && !c.disabled) { toggle(byId(c.dataset.h), c.dataset.date); renderCalendar(); }
+  });
+
+  // ---------- sheets ----------
+  function openSheet(html, onClick) {
+    const scrim = document.createElement('div');
+    scrim.className = 'scrim';
+    scrim.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
+    document.body.appendChild(scrim);
+    const close = () => { scrim.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    scrim.addEventListener('click', e => {
+      if (e.target === scrim || e.target.closest('[data-close]')) return close();
+      onClick?.(e, close, scrim);
+    });
+    return { scrim, close };
+  }
+  function openDaySheet(k) {
+    const d = parse(k);
+    const body = () => {
+      const list = active().filter(h => k >= h.createdOn);
+      const p = dayProgress(k);
+      return `<div class="grab"></div><div class="sheet-head"><div><h2>${DAY_LONG[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}</h2>
+        <div class="sub">${p.done} of ${p.total} due habits done</div></div><button class="x" type="button" data-close aria-label="Close">${X}</button></div>
+        <div class="list">${list.map(h => cardHTML(h, k, !isScheduled(h, d))).join('')}</div>
+        <button class="btn-primary" type="button" data-close>Done</button>`;
+    };
+    openSheet(body(), (e, close, scrim) => {
+      const card = e.target.closest('.card'); if (!card) return;
+      toggle(byId(card.dataset.id), k);
+      scrim.querySelector('.sheet').innerHTML = body();
+      renderCalendar();
+    });
+  }
+  function openEditor(id) {
+    const h = id ? byId(id) : null;
+    const used = active().map(x => x.color);
+    const draft = h ? { name: h.name, icon: h.icon, color: h.color, type: h.schedule.type, days: [...h.schedule.days] }
+      : { name: '', icon: '💧', color: COLORS.find(c => !used.includes(c)) || 'green', type: 'daily', days: [1, 3, 5] };
+    let err = '', confirmDelete = false;
+    const body = () => `<div class="grab"></div>
+      <div class="sheet-head"><h2>${h ? 'Edit habit' : 'New habit'}</h2><button class="x" type="button" data-close aria-label="Close">${X}</button></div>
+      <div class="field"><label class="flabel" for="hname">Name</label>
+        <input class="text-in" id="hname" maxlength="40" placeholder="e.g. Drink 2L water" value="${esc(draft.name)}" autocomplete="off"></div>
+      <div class="field"><span class="flabel">Icon</span><div class="emojis">${ICONS.map(i =>
+        `<button class="emo" type="button" data-icon="${i}" aria-pressed="${draft.icon === i}">${i}</button>`).join('')}</div></div>
+      <div class="field"><span class="flabel">Color</span><div class="swatches">${COLORS.map(c =>
+        `<button class="sw" type="button" data-color="${c}" style="--c:var(--h-${c})" aria-pressed="${draft.color === c}" aria-label="${c}"></button>`).join('')}</div></div>
+      <div class="field"><span class="flabel">Repeat</span>
+        <div class="seg"><button type="button" data-type="daily" aria-pressed="${draft.type === 'daily'}">Every day</button>
+        <button type="button" data-type="days" aria-pressed="${draft.type === 'days'}">Specific days</button></div>
+        ${draft.type === 'days' ? `<div class="days">${orderedDays().map(x =>
+          `<button class="dy" type="button" data-dow="${x}" aria-pressed="${draft.days.includes(x)}">${DAY_SHORT[x]}</button>`).join('')}</div>` : ''}</div>
+      ${err ? `<p class="err">${err}</p>` : ''}
+      <button class="btn-primary" type="button" data-save>${h ? 'Save changes' : 'Add habit'}</button>
+      ${h ? `<div class="btn-row"><button class="btn-sm" type="button" data-archive>Archive</button>
+        <button class="btn-sm danger" type="button" data-delete>${confirmDelete ? 'Tap again to delete' : 'Delete'}</button></div>` : ''}`;
+    const { scrim, close } = openSheet(body(), (e, close, scrim) => {
+      const t = e.target;
+      const redraw = () => { draft.name = $('#hname', scrim).value; scrim.querySelector('.sheet').innerHTML = body(); };
+      if (t.closest('[data-icon]')) { draft.icon = t.closest('[data-icon]').dataset.icon; return redraw(); }
+      if (t.closest('[data-color]')) { draft.color = t.closest('[data-color]').dataset.color; return redraw(); }
+      if (t.closest('[data-type]')) { draft.type = t.closest('[data-type]').dataset.type; return redraw(); }
+      if (t.closest('[data-dow]')) {
+        const x = Number(t.closest('[data-dow]').dataset.dow);
+        draft.days = draft.days.includes(x) ? draft.days.filter(y => y !== x) : [...draft.days, x];
+        return redraw();
+      }
+      if (t.closest('[data-save]')) {
+        draft.name = $('#hname', scrim).value.trim();
+        if (!draft.name) { err = 'Give the habit a name.'; return redraw(); }
+        if (draft.type === 'days' && !draft.days.length) { err = 'Pick at least one day.'; return redraw(); }
+        const schedule = { type: draft.type, days: draft.type === 'days' ? draft.days : [] };
+        if (h) Object.assign(h, { name: draft.name, icon: draft.icon, color: draft.color, schedule });
+        else habits.push({ id: 'h' + Date.now().toString(36), name: draft.name, icon: draft.icon, color: draft.color, schedule, createdOn: todayKey, archived: false });
+        close(); render();
+        return toast(h ? 'Saved' : `Added ${draft.name}`);
+      }
+      if (t.closest('[data-archive]')) {
+        h.archived = true; close(); render();
+        return toast(`Archived ${h.name}`, () => { h.archived = false; render(); });
+      }
+      if (t.closest('[data-delete]')) {
+        if (!confirmDelete) { confirmDelete = true; return redraw(); }
+        const idx = habits.indexOf(h);
+        const removed = [...checks].filter(c => c.startsWith(h.id + '|'));
+        habits.splice(idx, 1); removed.forEach(c => checks.delete(c));
+        close(); render();
+        return toast(`Deleted ${h.name}`, () => { habits.splice(idx, 0, h); removed.forEach(c => checks.add(c)); render(); });
+      }
+    });
+    if (!h) setTimeout(() => $('#hname', scrim)?.focus(), 50);
+  }
+
+  // ---------- settings ----------
+  let confirmErase = false;
+  function renderSettings() {
+    const v = $('#view-settings');
+    const archived = habits.filter(h => h.archived);
+    v.innerHTML = `
+      <header class="head"><div><div class="eyebrow">Tick</div><h1>Settings</h1></div></header>
+      <div class="glabel">Invite</div>
+      <div class="group"><div class="row invite"><div class="qr" id="qr" role="img" aria-label="QR code for the app link"></div>
+        <div class="rt"><div class="rtitle">Invite someone</div>
+        <div class="rs">They scan this code or open the link. They get their own copy of the app, and nothing they track is shared with you.</div>
+        <div class="linkrow"><code>${APP_URL}</code><button class="btn-sm" type="button" data-act="copy">Copy link</button></div></div></div></div>
+
+      <div class="glabel">Your data</div>
+      <div class="group">
+        <div class="row"><div class="rt"><div class="rtitle">Back up</div><div class="rs">Saves one file with all your habits and ticks. Last backup 27 days ago.</div></div>
+          <button class="btn-sm" type="button" data-act="backup">Back up</button></div>
+        <div class="row"><div class="rt"><div class="rtitle">Restore from a backup</div><div class="rs">Adds habits and ticks from a backup file. Nothing you have is overwritten.</div></div>
+          <button class="btn-sm" type="button" data-act="restore">Choose file</button></div>
+        <div class="row"><div class="rt"><div class="rs">Stored on this device only · ${active().length} habits · ${checks.size} ticks</div></div></div>
+      </div>
+
+      <div class="glabel">Preferences</div>
+      <div class="group">
+        <div class="row"><div class="rt"><div class="rtitle">Theme</div></div>
+          <div class="seg">${['system', 'light', 'dark'].map(t => `<button type="button" data-theme-set="${t}" aria-pressed="${S.theme === t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div></div>
+        <div class="row"><div class="rt"><div class="rtitle">Week starts on</div></div>
+          <div class="seg"><button type="button" data-ws="1" aria-pressed="${S.weekStart === 1}">Monday</button><button type="button" data-ws="0" aria-pressed="${S.weekStart === 0}">Sunday</button></div></div>
+      </div>
+
+      ${archived.length ? `<div class="glabel">Archived habits</div><div class="group">${archived.map(h => `
+        <div class="row"><span aria-hidden="true" style="font-size:20px">${h.icon}</span><div class="rt"><div class="rtitle">${esc(h.name)}</div><div class="rs">History kept</div></div>
+        <button class="btn-sm" type="button" data-unarchive="${h.id}">Restore</button></div>`).join('')}</div>` : ''}
+
+      <div class="glabel">Install on your phone</div>
+      <div class="group">
+        <div class="row"><div class="rt"><div class="rtitle">iPhone and iPad</div><div class="rs">In Safari, tap Share, then Add to Home Screen. Do this to keep your history safe: Safari clears a website's data after 7 days without a visit, but home-screen apps are exempt.</div></div></div>
+        <div class="row"><div class="rt"><div class="rtitle">Android</div><div class="rs">In Chrome, open the menu and tap Install app.</div></div></div>
+        <div class="row"><div class="rt"><div class="rtitle">Computer</div><div class="rs">In Chrome or Edge, click the install icon at the right of the address bar.</div></div></div>
+      </div>
+
+      <div class="glabel">Privacy</div>
+      <div class="group"><div class="row"><div class="rt"><div class="rs">Everything you track stays on this device. Tick has no accounts, no analytics and no server that receives your data.</div></div></div>
+        <div class="row"><div class="rt"><div class="rtitle">Erase all data</div><div class="rs">Removes every habit and tick from this device.</div></div>
+          <button class="btn-sm danger" type="button" data-act="erase">${confirmErase ? 'Tap again to erase' : 'Erase'}</button></div></div>
+
+      <p class="foot">This is a mockup with sample history. Changes reset when you reload, and the link above is a placeholder until the app is deployed.</p>`;
+    if (window.QRCode) {
+      try { new QRCode($('#qr'), { text: APP_URL, width: 96, height: 96, colorDark: '#161A17', colorLight: '#FFFFFF', correctLevel: QRCode.CorrectLevel.M }); } catch (_) {}
+    }
+  }
+  $('#view-settings').addEventListener('click', e => {
+    const t = e.target;
+    const th = t.closest('[data-theme-set]');
+    if (th) { S.theme = th.dataset.themeSet; applyTheme(); return renderSettings(); }
+    const ws = t.closest('[data-ws]');
+    if (ws) { S.weekStart = Number(ws.dataset.ws); S.cal.weekOf = null; return renderSettings(); }
+    const ua = t.closest('[data-unarchive]');
+    if (ua) { byId(ua.dataset.unarchive).archived = false; return renderSettings(); }
+    const act = t.closest('[data-act]')?.dataset.act;
+    if (act === 'copy') {
+      const ok = () => toast('Link copied');
+      try { navigator.clipboard.writeText(APP_URL).then(ok, () => toast('Select the link above to copy it')); } catch (_) { toast('Select the link above to copy it'); }
+    }
+    if (act === 'backup') toast(`The app saves tick-backup-${todayKey}.json here`);
+    if (act === 'restore') toast('The app opens a file picker here');
+    if (act === 'erase') {
+      if (!confirmErase) { confirmErase = true; return renderSettings(); }
+      confirmErase = false;
+      const hs = habits, cs = checks;
+      habits = []; checks = new Set(); S.selDate = todayKey;
+      renderSettings();
+      toast('Erased all data', () => { habits = hs; checks = cs; renderSettings(); });
+    }
+  });
+  function applyTheme() {
+    if (S.theme === 'system') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', S.theme);
+  }
+
+  // ---------- routing ----------
+  function render() {
+    if (S.tab === 'today') renderToday();
+    else if (S.tab === 'calendar') renderCalendar();
+    else renderSettings();
+  }
+  function go(tab) {
+    S.tab = tab;
+    ['today', 'calendar', 'settings'].forEach(t => { $('#view-' + t).hidden = t !== tab; });
+    document.querySelectorAll('.nav-item').forEach(b => b.toggleAttribute('aria-current', b.dataset.tab === tab));
+    document.querySelectorAll('.nav-item[aria-current]').forEach(b => b.setAttribute('aria-current', 'page'));
+    $('#main').classList.toggle('wide', tab === 'calendar');
+    confirmErase = false;
+    render();
+    window.scrollTo(0, 0);
+  }
+  document.querySelector('.nav').addEventListener('click', e => {
+    const b = e.target.closest('[data-tab]'); if (b) go(b.dataset.tab);
+  });
+  const start = (location.hash || '').slice(1);
+  go(['today', 'calendar', 'settings'].includes(start) ? start : 'today');
+})();
+</script>
