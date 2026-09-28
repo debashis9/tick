@@ -32,17 +32,26 @@ npm run serve &        # serves on :8420
 CHROME_PATH=/path/to/chrome node tests/e2e/smoke.mjs
 ```
 
-## Deploy (GitHub Pages)
+## Deploy (Cloudflare Workers)
 
-1. Create a GitHub repo and push this folder to `main`.
-2. Repo **Settings → Pages → Build and deployment**: Source = *Deploy from a branch*,
-   Branch = `main`, folder = `/ (root)`.
-3. The app is served at `https://<user>.github.io/<repo>/`. Share that link (Settings →
-   Invite shows it with a QR code).
+Tick needs its **own address** (origin). On Android, Chrome installs one app per origin, so a
+second app on the same origin (e.g. next to Margin on `debashis9.github.io`) shows "already
+installed" and can't be installed. That's why Tick is on Cloudflare, not GitHub Pages.
 
-**On every deploy, bump `VERSION` in `sw.js`** (`tick-v1` → `tick-v2`). Installed apps only
+- Cloudflare project: **Workers & Pages → tick**, connected to the GitHub repo `debashis9/tick`.
+  Every push to `main` builds and deploys automatically (`npx wrangler deploy`).
+- `wrangler.jsonc` says Tick is static files only. `.assetsignore` keeps `node_modules`, tests,
+  the mockup and docs off the site (the build installs Wrangler into `node_modules`, and one of
+  its files is over Cloudflare's 25 MB per-file limit).
+- The live address is shown under the project's **Domains** tab (`tick.<subdomain>.workers.dev`).
+  Settings → Invite in the app shows it with a QR code.
+
+**On every deploy, bump `VERSION` in `sw.js`** (`tick-v3` → `tick-v4`). Installed apps only
 pick up new files when `sw.js` changes; they then show "A new version of Tick is ready ·
 Refresh". If you add a file, add it to `SHELL` in `sw.js` too.
+
+Cloudflare redirects `/index.html` to `/`, so the service worker caches and serves `./`, never
+`./index.html` (a redirected response can't answer a page load).
 
 ## How it's put together
 
@@ -62,7 +71,8 @@ No framework and no build step. `package.json` only exists so Node runs the test
 | `js/backup.js` | Back up (share sheet / download) and restore |
 | `js/views/*.js` | Today, Calendar, Settings |
 | `sw.js` | Offline cache for the app shell |
-| `mockup/` | The approved design mockup (reference only; not used by the app) |
+| `mockup/` | The approved design mockup (reference only; not deployed) |
+| `wrangler.jsonc`, `.assetsignore` | Cloudflare deploy config and the list of files not to publish |
 
 Data lives in IndexedDB database `tick`: `habits`, `checks` (`[habitId, date]`, present = done)
 and `settings`. Browsers can clear site data, so the app asks for persistent storage on the

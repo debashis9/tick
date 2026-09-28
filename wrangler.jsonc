@@ -1,0 +1,9 @@
+// Cloudflare Workers config: Tick is static files only (no server code).
+// Workers Builds runs `npx wrangler deploy` on every push to main.
+{
+  "name": "tick",
+  "compatibility_date": "2026-09-26",
+  "assets": {
+    "directory": "."
+  }
+}

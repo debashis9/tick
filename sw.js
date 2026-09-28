@@ -1,10 +1,9 @@
 // Cache-first app shell. Bump VERSION on every deploy: the browser only installs a new
 // service worker when this file's bytes change, and the app then offers "Refresh".
-const VERSION = 'tick-v2';
+const VERSION = 'tick-v3';
 
 const SHELL = [
   './',
-  './index.html',
   './styles.css',
   './manifest.webmanifest',
   './js/app.js',
@@ -29,6 +28,9 @@ const SHELL = [
   './icons/icon-maskable-512.png',
 ];
 
+// A response that followed a redirect can't be used for a navigation; copy it into a plain one.
+const unredirect = r => r.redirected ? r.blob().then(b => new Response(b, { status: r.status, statusText: r.statusText, headers: r.headers })) : r;
+
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(VERSION).then(cache => cache.addAll(SHELL)));
 });
@@ -49,8 +51,10 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
   if (req.mode === 'navigate') {
-    // Any page load (including ?query or #hash variants) gets the cached shell.
-    event.respondWith(caches.match('./index.html').then(r => r || fetch(req)));
+    // Any page load (including ?query or #hash variants) gets the cached shell. It's cached
+    // as './', not './index.html': some hosts (Cloudflare) redirect /index.html to /, and a
+    // redirected response can't answer a navigation.
+    event.respondWith(caches.match('./').then(r => r ? unredirect(r) : fetch(req)));
     return;
   }
   if (new URL(req.url).pathname.endsWith('/manifest.webmanifest')) {

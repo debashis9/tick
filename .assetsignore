@@ -1,0 +1,15 @@
+# Everything in this folder is published except what's listed here.
+# The app itself is: index.html, styles.css, sw.js, manifest.webmanifest, js/, fonts/, icons/
+.git
+.wrangler
+node_modules
+tests
+mockup
+package.json
+package-lock.json
+wrangler.jsonc
+README.md
+PLAN.md
+.gitignore
+.nojekyll
+.assetsignore
