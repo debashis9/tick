@@ -5,6 +5,7 @@ import { renderToday, bindToday } from './views/today.js';
 import { renderCalendar, bindCalendar } from './views/calendar.js';
 import { renderSettings, bindSettings, resetSettingsConfirm } from './views/settings.js';
 import { applyTheme } from './theme.js';
+import { startReminderSync } from './push.js';
 
 const TABS = ['today', 'calendar', 'settings'];
 
@@ -87,6 +88,7 @@ async function boot() {
   const start = location.hash.slice(1);
   go(TABS.includes(start) ? start : 'today');
   registerServiceWorker();
+  startReminderSync();
 }
 
 boot();

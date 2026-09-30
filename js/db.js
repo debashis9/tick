@@ -53,9 +53,10 @@ export const saveHabits = habits => write(['habits'], t => {
   habits.forEach(h => s.put(h));
 });
 
-export const setCheck = (habitId, date, done) => write(['checks'], t => {
+// A check is one habit on one day: { habitId, date, at, kind?, amount? }. null removes it.
+export const putCheck = (habitId, date, entry) => write(['checks'], t => {
   const s = t.objectStore('checks');
-  if (done) s.put({ habitId, date, at: Date.now() });
+  if (entry) s.put({ ...entry, habitId, date, at: entry.at || Date.now() });
   else s.delete([habitId, date]);
 });
 
@@ -74,11 +75,16 @@ export const deleteHabit = id => write(['habits', 'checks'], t => {
 export const putAll = (habits, checks) => write(['habits', 'checks'], t => {
   const hs = t.objectStore('habits'), cs = t.objectStore('checks');
   habits.forEach(h => hs.put(h));
-  checks.forEach(c => cs.put({ habitId: c.habitId, date: c.date, at: c.at || Date.now() }));
+  checks.forEach(c => cs.put({ ...c, at: c.at || Date.now() }));
 });
 
 export const saveSettings = settings => write(['settings'], t => {
   t.objectStore('settings').put({ ...settings, id: 'app' });
+});
+
+// Tells the service worker that the next push is a test (see sendTest in push.js).
+export const markPushTest = () => write(['settings'], t => {
+  t.objectStore('settings').put({ id: 'pushTest', at: Date.now() });
 });
 
 export const eraseAll = () => write(['habits', 'checks', 'settings'], t => {

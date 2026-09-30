@@ -489,6 +489,33 @@ Local-only means the device *is* the database. Plan for the ways data gets lost:
 - **A new habit's card says "New"** until its first tick, rather than "Strength 0%".
 - **A past day before any habit existed** says so, instead of showing an empty list.
 
+### Added 2026-09-30 (the "Later" list, except the invite gate)
+- **"N times a week"**: any N of the week's days (1–6). A week is judged once it ends: undone
+  days are "not needed" once the target is met, and "missed" only in a week that fell short.
+  Runs and strength count weeks (strength half-life 4 weeks). A first partial week only counts
+  if it was met. Today shows the habit until the week's target is met.
+- **Daily amounts** (pages, minutes): the day is done once the amount reaches the goal. On Today,
+  tapping the habit opens a number sheet (the day's total, − / + in steps of 5 for goals ≥ 20);
+  the check circle fills partway. In the calendar a tap still toggles (done = the full goal).
+- **Kinds** (Walk / Jog / Run): a comma-separated list on any habit. Chips appear on the card
+  after ticking, so the tick stays one tap. The default habit got Walk, Jog, Run (settings
+  schema version 2 migrates existing installs). The calendar shows counts per kind.
+- **Reminders use Web Push from the Worker** (chosen over calendar-file reminders). The Worker
+  stores only the push address, reminder times with weekdays, and time zone; the push is empty
+  and the service worker reads the habits locally to word it. This is the one exception to "no
+  server that receives data", stated in Settings → Reminders and Privacy.
+- **Amount and kinds are always the user's choice.** They sit under a collapsed "More options"
+  in the add/edit sheet (open when a habit already uses them), so adding a habit stays name,
+  icon, color, repeat. The habit's name can *suggest* one: "read / book / pages" → 20 pages a
+  day, "meditate / yoga / study / practice" → 15 minutes, "water / drink" → 8 glasses, and a
+  name with parts ("Walk / Jog / Run", "Tea or coffee") → those parts as kinds. A suggestion
+  is a button; nothing is applied without a tap.
+- **Reminders scale by spreading**: each cron run sends at most 45 pushes (free plan ≈ 50
+  outgoing requests per run); the rest go out in the next minutes (a reminder stays due for
+  30 minutes). Each device gets only its own reminders: the server keys records by push address.
+- **Drag to reorder on Today**: press and hold lifts the card; release to edit (as before), or
+  move to drag. Up/down buttons in Settings stay for keyboards.
+
 ---
 
 ## Sources

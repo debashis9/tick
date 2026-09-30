@@ -1,8 +1,9 @@
-import { store, active, archived, byId, saveSettings, setArchived, deleteHabit, moveHabit, eraseAll } from '../store.js';
-import { view, $, esc, cap, ICON, render, toast, storageError, daysSince } from '../ui.js';
+import { store, active, archived, byId, saveSettings, setArchived, deleteHabit, moveHabit, eraseAll, tickCount } from '../store.js';
+import { view, $, esc, cap, ICON, render, toast, storageError, daysSince, scheduleText } from '../ui.js';
 import { openEditor } from '../sheets.js';
 import { exportBackup, importBackup } from '../backup.js';
 import { applyTheme } from '../theme.js';
+import { pushProblem, permission, sendTest } from '../push.js';
 
 const el = () => $('#view-settings');
 let confirmErase = false;
@@ -24,9 +25,27 @@ function backupText() {
   return `Saves one file with all your habits and ticks. Last backup ${n === 0 ? 'today' : n === 1 ? 'yesterday' : `${n} days ago`}.`;
 }
 
+function remindersHTML(list) {
+  const withRem = list.filter(h => h.reminder).sort((a, b) => a.reminder < b.reminder ? -1 : 1);
+  const problem = pushProblem(), perm = permission();
+  const status = problem ? problem
+    : perm === 'denied' ? 'Notifications are blocked for Tick. Allow them in your browser or phone settings.'
+    : null;
+  return `<div class="glabel">Reminders</div>
+    <div class="group">
+      ${withRem.map(h => `<div class="row" style="--c:var(--h-${h.color})"><span class="ico sm" aria-hidden="true">${esc(h.icon)}</span>
+        <div class="rt"><div class="rtitle">${esc(h.name)}</div><div class="rs">${h.reminder} · ${esc(scheduleText(h))}</div></div>
+        <button class="btn-sm" type="button" data-edit="${h.id}">Edit</button></div>`).join('')}
+      ${withRem.length ? '' : '<div class="row"><div class="rt"><div class="rtitle">No reminders</div><div class="rs">Edit a habit to get a notification at a set time on the days it\'s due.</div></div></div>'}
+      ${status ? `<div class="row"><div class="rt"><div class="rs">${esc(status)}</div></div></div>` : ''}
+      ${withRem.length && perm === 'granted' ? '<div class="row"><div class="rt"><div class="rtitle">Send a test</div><div class="rs">Checks that reminders reach this device.</div></div><button class="btn-sm" type="button" data-act="test-push">Send</button></div>' : ''}
+      <div class="row"><div class="rt"><div class="rs">To send reminders, the Tick server keeps this device's push address, your reminder times and time zone. It never learns your habits or ticks. Turning off every reminder deletes what it keeps.</div></div></div>
+    </div>`;
+}
+
 export function renderSettings() {
   const s = store.settings;
-  const list = active(), arch = archived();
+  const list = active(), arch = archived(), ticks = tickCount();
   el().innerHTML = `
     <header class="head"><div><div class="eyebrow">Tick</div><h1>Settings</h1></div></header>
 
@@ -47,6 +66,8 @@ export function renderSettings() {
       <button class="btn-sm" type="button" data-unarchive="${h.id}">Restore</button>
       <button class="btn-sm danger" type="button" data-delete="${h.id}">Delete</button></div>`).join('')}</div>` : ''}
 
+    ${remindersHTML(list)}
+
     <div class="glabel">Invite</div>
     <div class="group"><div class="row invite"><div class="qr" id="qr" role="img" aria-label="QR code for the app link"></div>
       <div class="rt"><div class="rtitle">Invite someone</div>
@@ -62,7 +83,7 @@ export function renderSettings() {
       <div class="row"><div class="rt"><div class="rtitle">Restore from a backup</div><div class="rs">Adds habits and ticks from a backup file. Nothing you have is overwritten.</div></div>
         <label class="btn-sm" for="restore-file">Choose file</label>
         <input type="file" id="restore-file" accept="application/json,.json" hidden></div>
-      <div class="row"><div class="rt"><div class="rs">Stored on this device only · ${list.length} ${list.length === 1 ? 'habit' : 'habits'} · ${store.checks.size} ${store.checks.size === 1 ? 'tick' : 'ticks'}</div></div></div>
+      <div class="row"><div class="rt"><div class="rs">Stored on this device only · ${list.length} ${list.length === 1 ? 'habit' : 'habits'} · ${ticks} ${ticks === 1 ? 'tick' : 'ticks'}</div></div></div>
     </div>
 
     <div class="glabel">Preferences</div>
@@ -84,7 +105,7 @@ export function renderSettings() {
 
     <div class="glabel">Privacy</div>
     <div class="group">
-      <div class="row"><div class="rt"><div class="rs">Everything you track stays on this device. Tick has no accounts, no analytics and no server that receives your data.</div></div></div>
+      <div class="row"><div class="rt"><div class="rs">Everything you track stays on this device. Tick has no accounts, no analytics and no server that receives your habits or ticks. Reminders are the only thing that uses a server (see Reminders above).</div></div></div>
       <div class="row"><div class="rt"><div class="rtitle">Erase all data</div><div class="rs">Removes every habit and tick from this device.</div></div>
         <button class="btn-sm danger" type="button" data-act="erase">${confirmErase ? 'Tap again to erase' : 'Erase'}</button></div>
     </div>`;
@@ -126,6 +147,11 @@ export function bindSettings() {
       }
       const act = t.closest('[data-act]')?.dataset.act;
       if (act === 'new') return openEditor(null);
+      if (act === 'test-push') {
+        try { await sendTest(); toast('Test sent. It should arrive in a few seconds.'); }
+        catch (e) { console.warn(e); toast(navigator.onLine ? "Couldn't send a test. Try again later." : 'Connect to the internet to send a test.'); }
+        return;
+      }
       if (act === 'backup') { await exportBackup(); return renderSettings(); }
       if (act === 'share') {
         try { await navigator.share({ title: 'Tick', text: 'A simple habit tracker. Your data stays on your phone.', url: appURL() }); } catch { /* cancelled */ }

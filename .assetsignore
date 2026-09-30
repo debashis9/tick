@@ -8,8 +8,11 @@ mockup
 package.json
 package-lock.json
 wrangler.jsonc
+worker
+.dev.vars
 README.md
 PLAN.md
+TODO.md
 .gitignore
 .nojekyll
 .assetsignore

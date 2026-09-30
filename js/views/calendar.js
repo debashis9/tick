@@ -1,11 +1,10 @@
 import { todayKey, key, parse, addDays, weekIdx, startOfWeek, orderedDays, DAY_SHORT, DAY_LONG, MONTHS, MON_SHORT } from '../dates.js';
-import { isScheduled, dayState, habitStats, bridge, rangeRate } from '../stats.js';
+import { isDue, isWeekly, dayState, habitStats, bridge, rangeRate } from '../stats.js';
 import { store, has, active, byId } from '../store.js';
-import { view, $, esc, cap, plural, ICON, stateLabel, toggle, monthOf } from '../ui.js';
+import { view, $, ws, esc, cap, plural, ICON, stateLabel, toggle, monthOf, amountText } from '../ui.js';
 import { openDaySheet } from '../sheets.js';
 
 const el = () => $('#view-calendar');
-const ws = () => store.settings.weekStart;
 
 function monthHead(tKey) {
   const m0 = view.cal.month, t = parse(tKey);
@@ -25,7 +24,7 @@ function monthGridStart() {
 function monthSingleHTML(h, tKey) {
   const m0 = view.cal.month, y = m0.getFullYear(), mo = m0.getMonth();
   const nd = new Date(y, mo + 1, 0).getDate();
-  const st = d => dayState(h, d, has, tKey);
+  const st = d => dayState(h, d, has, tKey, ws());
   let cells = monthGridStart(), doneN = 0, dueN = 0, run = 0, bestRun = 0;
   for (let day = 1; day <= nd; day++) {
     const d = new Date(y, mo, day), k = key(d), s = st(d);
@@ -35,25 +34,27 @@ function monthSingleHTML(h, tKey) {
       const ps = day > 1 ? st(addDays(d, -1)) : null;
       const ns = day < nd ? st(addDays(d, 1)) : null;
       if (ps === 'done') cls += ' jl';
-      else if (ps === 'off' || ps === 'missed') { const b = bridge(h, addDays(d, -1), has, tKey); if (b) inner += `<i class="ln l ${b}"></i>`; }
+      else if (ps === 'off' || ps === 'missed') { const b = bridge(h, addDays(d, -1), has, tKey, ws()); if (b) inner += `<i class="ln l ${b}"></i>`; }
       if (ns === 'done') cls += ' jr';
-      else if (ns === 'off' || ns === 'missed') { const b = bridge(h, addDays(d, 1), has, tKey); if (b) inner += `<i class="ln r ${b}"></i>`; }
+      else if (ns === 'off' || ns === 'missed') { const b = bridge(h, addDays(d, 1), has, tKey, ws()); if (b) inner += `<i class="ln r ${b}"></i>`; }
       inner += '<i class="band"></i>';
     } else if (s === 'off' || s === 'missed') {
       if (s === 'missed') { dueN++; run = 0; }
-      const b = bridge(h, d, has, tKey);
+      const b = bridge(h, d, has, tKey, ws());
       if (b) inner += `<i class="ln ${b}"></i>`;
     }
     const dis = s === 'future' || s === 'before';
     cells += `<button class="${cls}" type="button" data-h="${h.id}" data-date="${k}" ${dis ? 'disabled' : ''}
       aria-label="${DAY_LONG[d.getDay()]} ${day} ${MONTHS[mo]}: ${esc(h.name)}, ${stateLabel[s]}">${inner}<span class="num">${day}</span></button>`;
   }
-  const summary = dueN
+  const summary = isWeekly(h)
+    ? `<p class="summary">Done on <b>${doneN}</b> ${doneN === 1 ? 'day' : 'days'} this month. Goal: ${h.schedule.times} a week, any days.</p>`
+    : dueN
     ? `<p class="summary"><b>${doneN}</b> of ${plural(dueN, 'due day')} done · longest run this month <b>${bestRun}</b></p>`
     : '<p class="summary">No due days this month yet.</p>';
   return `<div class="panel" style="--c:var(--h-${h.color})">${monthHead(tKey)}<div class="mgrid">${cells}</div>${summary}</div>
-    <div class="legend" style="--c:var(--h-${h.color})"><span><i class="lg done"></i>Done</span><span><i class="lg missed"></i>Missed</span>
-    <span><i class="lg dash"></i>One miss between done days</span><span><i class="lg off"></i>Not scheduled</span></div>`;
+    <div class="legend" style="--c:var(--h-${h.color})"><span><i class="lg done"></i>Done</span><span><i class="lg missed"></i>${isWeekly(h) ? 'Week fell short' : 'Missed'}</span>
+    <span><i class="lg dash"></i>One miss between done days</span><span><i class="lg off"></i>${isWeekly(h) ? 'Not needed' : 'Not scheduled'}</span></div>`;
 }
 
 // All habits: each day is a ring with one slice per habit that was due.
@@ -69,7 +70,7 @@ function monthAllHTML(tKey) {
       cells += `<button class="mc mc-all s-future" type="button" disabled><span class="num">${day}</span></button>`;
       continue;
     }
-    const due = list.filter(h => isScheduled(h, d));
+    const due = list.filter(h => isDue(h, d, has, tKey, ws()));
     const doneN = due.filter(h => has(h.id, k)).length;
     const isPerfect = due.length > 0 && doneN === due.length;
     if (due.length) dueDays++;
@@ -107,7 +108,7 @@ function weekHTML(h, tKey) {
   list.forEach(hb => {
     grid += `<div class="hn"><span class="e" aria-hidden="true">${esc(hb.icon)}</span><span class="t">${esc(hb.name)}</span></div>`;
     grid += days.map(d => {
-      const s = dayState(hb, d, has, tKey);
+      const s = dayState(hb, d, has, tKey, ws());
       if (s === 'done') { done++; due++; } else if (s === 'missed' || s === 'pending') due++;
       const dis = s === 'future' || s === 'before';
       return `<button class="wc s-${s}" type="button" style="--c:var(--h-${hb.color})" data-h="${hb.id}" data-date="${key(d)}" ${dis ? 'disabled' : ''}
@@ -142,12 +143,12 @@ function yearHTML(h, tKey) {
       if (k > tKey) { out += '<span class="yc"></span>'; continue; }
       let bg = 'transparent', lab;
       if (h) {
-        const s = dayState(h, d, has, tKey);
+        const s = dayState(h, d, has, tKey, ws());
         bg = s === 'done' ? 'var(--c)' : s === 'missed' ? 'var(--track)' : s === 'off' ? 'var(--off)' : 'transparent';
         if (s === 'done') total++;
         lab = stateLabel[s];
       } else {
-        const due = list.filter(x => isScheduled(x, d));
+        const due = list.filter(x => isDue(x, d, has, tKey, ws()));
         const dn = due.filter(x => has(x.id, k)).length;
         if (due.length) {
           const f = dn / due.length;
@@ -169,14 +170,33 @@ function yearHTML(h, tKey) {
     <div class="legend" ${cvar}>${legend}</div>`;
 }
 
+// Amount totals for quantity habits and a count per kind, over the last 30 days.
+function detailHTML(h, tKey) {
+  const from = key(addDays(parse(tKey), -29)), parts = [];
+  let recent = 0, total = 0;
+  const kinds = new Map(h.kinds.map(x => [x, 0]));
+  for (const [c, e] of store.entries) {
+    if (!c.startsWith(h.id + '|')) continue;
+    const k = c.slice(h.id.length + 1), isRecent = k >= from;
+    if (h.goal && e.amount) { total += e.amount; if (isRecent) recent += e.amount; }
+    if (isRecent && e.kind && has(h.id, k)) kinds.set(e.kind, (kinds.get(e.kind) || 0) + 1);
+  }
+  if (h.goal) parts.push(`<span><b>${esc(amountText(h, recent))}</b> in the last 30 days</span><span><b>${esc(amountText(h, total))}</b> since you started</span>`);
+  if ([...kinds.values()].some(Boolean)) parts.push(`<span>Last 30 days: ${[...kinds].filter(([, n]) => n).map(([x, n]) => `${esc(x)} <b>${n}</b>`).join(' · ')}</span>`);
+  return parts.length ? `<p class="detail">${parts.join('')}</p>` : '';
+}
+
 function statsHTML(h, tKey) {
-  const st = habitStats(h, has, tKey);
+  const st = habitStats(h, has, tKey, ws()), wk = st.unit === 'week';
   return `<div class="stats" style="--c:var(--h-${h.color})">
     <div><b>${st.strength}%</b><span>Strength</span><div class="meter"><i style="width:${st.strength}%"></i></div></div>
-    <div><b>${st.streak}</b><span>Current run</span></div>
-    <div><b>${st.best}</b><span>Best run</span></div>
-    <div><b>${st.rate}%</b><span>Last 30 days</span></div></div>
-    <p class="explain">Strength counts every tick since you started, with recent days weighted most. A single missed day only lowers it a little.</p>`;
+    <div><b>${st.streak}</b><span>${wk ? 'Weeks in a row' : 'Current run'}</span></div>
+    <div><b>${st.best}</b><span>${wk ? 'Best, in weeks' : 'Best run'}</span></div>
+    <div><b>${st.rate}%</b><span>${wk ? 'Recent weeks' : 'Last 30 days'}</span></div></div>
+    ${detailHTML(h, tKey)}
+    <p class="explain">${wk
+    ? `A week counts once you tick ${h.schedule.times} of its days. Strength weights recent weeks most, so one short week only lowers it a little.`
+    : 'Strength counts every tick since you started, with recent days weighted most. A single missed day only lowers it a little.'}</p>`;
 }
 
 function barsHTML(h, tKey) {
@@ -184,7 +204,7 @@ function barsHTML(h, tKey) {
   let bars = '', xs = '';
   for (let i = 11; i >= 0; i--) {
     const w0 = addDays(cur, -7 * i);
-    const r = rangeRate(h, w0, addDays(w0, 6), has, tKey);
+    const r = rangeRate(h, w0, addDays(w0, 6), has, tKey, ws());
     bars += `<div class="bar${i === 0 ? ' cur' : ''}${r.due ? '' : ' none'}" style="height:${r.pct}%" title="Week of ${w0.getDate()} ${MON_SHORT[w0.getMonth()]}: ${r.done} of ${r.due} (${r.pct}%)"></div>`;
     xs += `<span>${i === 0 ? 'Now' : i % 4 === 3 ? `${w0.getDate()} ${MON_SHORT[w0.getMonth()]}` : ''}</span>`;
   }

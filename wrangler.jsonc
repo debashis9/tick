@@ -1,9 +1,19 @@
-// Cloudflare Workers config: Tick is static files only (no server code).
-// Workers Builds runs `npx wrangler deploy` on every push to main.
+// Cloudflare Workers config. Tick is static files, served straight from assets. The Worker
+// code in worker/ only runs for /api/* (reminder sign-up) and the once-a-minute cron that
+// sends reminders. Workers Builds runs `npx wrangler deploy` on every push to main.
+// Secret (set once, not in git): VAPID_JWK, the private key reminders are signed with.
 {
   "name": "tick",
+  "main": "worker/index.js",
   "compatibility_date": "2026-09-26",
   "assets": {
-    "directory": "."
-  }
+    "directory": ".",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "REMINDERS", "class_name": "Reminders" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Reminders"] }],
+  "triggers": { "crons": ["* * * * *"] }
 }

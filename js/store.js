@@ -7,6 +7,7 @@ import { todayKey, isValidKey } from './dates.js';
 
 export const COLORS = ['green', 'blue', 'violet', 'pink', 'orange', 'amber', 'teal', 'slate'];
 export const ICONS = ['🏃', '📖', '🧘', '💧', '💪', '🥗', '✍️', '🎸', '🛌', '🌱', '💊', '🧹', '📵', '☀️', '🧠', '🚴'];
+export const MAX_KINDS = 6;
 
 const DEFAULT_SETTINGS = {
   weekStart: 1,
@@ -16,48 +17,65 @@ const DEFAULT_SETTINGS = {
   lastBackupOn: null,
   backupSnoozedUntil: null,
   installTipDismissed: false,
-  schemaVersion: 1,
+  pushSynced: null,
+  schemaVersion: 2,
 };
 
+// A habit: { id, name, icon, color, schedule, kinds, goal, reminder, order, createdOn, archivedOn }
+//   schedule: { type: 'daily' } | { type: 'days', days: [0–6] } | { type: 'weekly', times: 1–6 }
+//   kinds:    [] or e.g. ['Walk', 'Jog', 'Run']: optional, picked after ticking
+//   goal:     null or { amount: 20, unit: 'pages' }: the day is done once the amount is reached
+//   reminder: null or 'HH:MM'
 export const store = {
   habits: [],
-  checks: new Set(),   // 'habitId|YYYY-MM-DD'
+  entries: new Map(),   // 'habitId|YYYY-MM-DD' → { kind?, amount?, at? }
   settings: { ...DEFAULT_SETTINGS },
 };
 
 const ck = (id, k) => id + '|' + k;
 const split = c => { const i = c.indexOf('|'); return { habitId: c.slice(0, i), date: c.slice(i + 1) }; };
-export const has = (id, k) => store.checks.has(ck(id, k));
+export const byId = id => store.habits.find(h => h.id === id);
+export const entry = (id, k) => store.entries.get(ck(id, k));
+export const isDoneEntry = (h, e) => !!e && (!h?.goal || e.amount == null || e.amount >= h.goal.amount);
+// Done on that day. A quantity habit counts once its goal is reached.
+export const has = (id, k) => {
+  const e = store.entries.get(ck(id, k));
+  return !!e && isDoneEntry(byId(id), e);
+};
+export const hasEntries = id => { for (const c of store.entries.keys()) if (c.startsWith(id + '|')) return true; return false; };
+export const tickCount = () => { let n = 0; for (const c of store.entries.keys()) { const { habitId, date } = split(c); if (has(habitId, date)) n++; } return n; };
 export const active = () => store.habits.filter(h => !h.archivedOn);
 export const archived = () => store.habits.filter(h => h.archivedOn);
-export const byId = id => store.habits.find(h => h.id === id);
 const newId = () => 'h' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const sortHabits = () => store.habits.sort((a, b) => a.order - b.order);
+const normalize = h => Object.assign(h, { kinds: h.kinds || [], goal: h.goal || null, reminder: h.reminder || null });
+const rows = () => [...store.entries].map(([c, e]) => ({ ...split(c), ...e }));
 
 // Other open tabs re-read storage when this one changes something.
-const listeners = new Set();
+const listeners = new Set(), localListeners = new Set();
 export const onExternalChange = fn => listeners.add(fn);
+export const onLocalChange = fn => localListeners.add(fn);
 const channel = 'BroadcastChannel' in self ? new BroadcastChannel('tick') : null;
 if (channel) channel.onmessage = async () => { await load(); listeners.forEach(fn => fn()); };
-const changed = () => channel?.postMessage('changed');
+const changed = () => { channel?.postMessage('changed'); localListeners.forEach(fn => fn()); };
 
 async function load() {
   const { habits, checks, settings } = await db.loadAll();
-  store.habits = habits;
+  store.habits = habits.map(normalize);
   sortHabits();
-  store.checks = new Set(checks.map(c => ck(c.habitId, c.date)));
+  store.entries = new Map(checks.map(({ habitId, date, ...e }) => [ck(habitId, date), e]));
   store.settings = { ...DEFAULT_SETTINGS, ...settings };
   delete store.settings.id;
 }
 
 export async function init() {
   await load();
-  if (store.settings.seeded) return;
+  if (store.settings.seeded) return migrate();
   const t = todayKey();
   if (!store.habits.length) {
     store.habits = [
-      { id: newId(), name: 'Walk / Jog / Run', icon: '🏃', color: 'green', schedule: { type: 'daily', days: [] }, order: 0, createdOn: t, archivedOn: null },
-      { id: newId(), name: 'Read a book', icon: '📖', color: 'blue', schedule: { type: 'daily', days: [] }, order: 1, createdOn: t, archivedOn: null },
+      { id: newId(), name: 'Walk / Jog / Run', icon: '🏃', color: 'green', schedule: { type: 'daily', days: [] }, kinds: ['Walk', 'Jog', 'Run'], goal: null, reminder: null, order: 0, createdOn: t, archivedOn: null },
+      { id: newId(), name: 'Read a book', icon: '📖', color: 'blue', schedule: { type: 'daily', days: [] }, kinds: [], goal: null, reminder: null, order: 1, createdOn: t, archivedOn: null },
     ];
     await db.saveHabits(store.habits);
   }
@@ -66,17 +84,37 @@ export async function init() {
   await db.saveSettings(store.settings);
 }
 
+// Version 2 added kinds: the default "Walk / Jog / Run" habit gets Walk, Jog and Run.
+async function migrate() {
+  if ((store.settings.schemaVersion || 1) >= 2) return;
+  const walk = store.habits.filter(h => h.name === 'Walk / Jog / Run' && !h.kinds.length);
+  walk.forEach(h => { h.kinds = ['Walk', 'Jog', 'Run']; });
+  if (walk.length) await db.saveHabits(walk);
+  store.settings.schemaVersion = 2;
+  await db.saveSettings(store.settings);
+}
+
 // ---------- checks ----------
-export async function setCheck(habitId, k, done) {
-  if (done) store.checks.add(ck(habitId, k)); else store.checks.delete(ck(habitId, k));
-  await db.setCheck(habitId, k, done);
+// Sets or clears (null) one day's entry for a habit.
+export async function setEntry(habitId, k, e) {
+  if (e) store.entries.set(ck(habitId, k), e); else store.entries.delete(ck(habitId, k));
+  await db.putCheck(habitId, k, e);
   changed();
 }
 
+// Ticks or unticks a day. Ticking a quantity habit logs its full goal; a picked kind is kept.
+export function setCheck(h, k, done) {
+  if (!done) return setEntry(h.id, k, null);
+  const e = {}, old = entry(h.id, k);
+  if (old?.kind) e.kind = old.kind;
+  if (h.goal) e.amount = Math.max(old?.amount || 0, h.goal.amount);
+  return setEntry(h.id, k, e);
+}
+
 // ---------- habits ----------
-export async function addHabit({ name, icon, color, schedule }) {
+export async function addHabit(fields) {
   const order = store.habits.reduce((m, h) => Math.max(m, h.order), -1) + 1;
-  const h = { id: newId(), name, icon, color, schedule, order, createdOn: todayKey(), archivedOn: null };
+  const h = normalize({ id: newId(), ...fields, order, createdOn: todayKey(), archivedOn: null });
   store.habits.push(h);
   await db.saveHabits([h]);
   changed();
@@ -97,29 +135,35 @@ export async function setArchived(h, isArchived) {
 
 // Returns an undo function that puts the habit and its history back.
 export async function deleteHabit(h) {
-  const removed = [...store.checks].filter(c => c.startsWith(h.id + '|'));
+  const removed = rows().filter(r => r.habitId === h.id);
   store.habits = store.habits.filter(x => x !== h);
-  removed.forEach(c => store.checks.delete(c));
+  removed.forEach(r => store.entries.delete(ck(r.habitId, r.date)));
   await db.deleteHabit(h.id);
   changed();
   return async () => {
     store.habits.push(h);
     sortHabits();
-    removed.forEach(c => store.checks.add(c));
-    await db.putAll([h], removed.map(split));
+    removed.forEach(({ habitId, date, ...e }) => store.entries.set(ck(habitId, date), e));
+    await db.putAll([h], removed);
     changed();
   };
 }
 
 export async function moveHabit(h, dir) {
-  const list = active();
-  const i = list.indexOf(h), j = i + dir;
-  if (i < 0 || j < 0 || j >= list.length) return;
-  const other = list[j];
-  [h.order, other.order] = [other.order, h.order];
-  if (h.order === other.order) h.order += dir;
+  const ids = active().map(x => x.id), i = ids.indexOf(h.id), j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  await reorder(ids);
+}
+
+// Puts the active habits in the order of `ids`; archived habits go after them.
+export async function reorder(ids) {
+  const list = [...ids.map(byId).filter(h => h && !h.archivedOn), ...archived()];
+  const moved = list.filter((h, i) => h.order !== i);
+  list.forEach((h, i) => { h.order = i; });
   sortHabits();
-  await db.saveHabits([h, other]);
+  if (!moved.length) return;
+  await db.saveHabits(moved);
   changed();
 }
 
@@ -134,28 +178,45 @@ export async function saveSettings(patch) {
 export function exportData() {
   return {
     app: 'tick',
-    version: 1,
+    version: 2,
     exportedOn: todayKey(),
     habits: store.habits,
-    checks: [...store.checks].map(split),
+    checks: rows().map(({ at, ...r }) => r),
     settings: { weekStart: store.settings.weekStart, theme: store.settings.theme },
   };
+}
+
+const cleanText = (s, max) => typeof s === 'string' ? s.trim().slice(0, max) : '';
+const cleanAmount = n => Number.isFinite(n) && n >= 0 && n <= 1e6 ? Math.round(n * 100) / 100 : null;
+
+function cleanSchedule(s) {
+  if (s?.type === 'weekly') {
+    return Number.isInteger(s.times) && s.times >= 1 && s.times <= 6 ? { type: 'weekly', times: s.times, days: [] } : null;
+  }
+  if (s?.type === 'days') {
+    const days = Array.isArray(s.days) ? [...new Set(s.days.filter(d => Number.isInteger(d) && d >= 0 && d <= 6))] : [];
+    return days.length ? { type: 'days', days } : null;
+  }
+  return { type: 'daily', days: [] };
 }
 
 function cleanHabit(h) {
   if (!h || typeof h.id !== 'string' || !/^[\w-]{1,40}$/.test(h.id)) return null;
   if (typeof h.name !== 'string' || !h.name.trim()) return null;
   if (!isValidKey(h.createdOn)) return null;
-  const type = h.schedule?.type === 'days' ? 'days' : 'daily';
-  const days = type === 'days' && Array.isArray(h.schedule.days)
-    ? [...new Set(h.schedule.days.filter(d => Number.isInteger(d) && d >= 0 && d <= 6))] : [];
-  if (type === 'days' && !days.length) return null;
+  const schedule = cleanSchedule(h.schedule);
+  if (!schedule) return null;
+  const kinds = Array.isArray(h.kinds) ? [...new Set(h.kinds.map(x => cleanText(x, 20)).filter(Boolean))].slice(0, MAX_KINDS) : [];
+  const amount = cleanAmount(h.goal?.amount);
   return {
     id: h.id,
     name: h.name.trim().slice(0, 60),
     icon: typeof h.icon === 'string' && h.icon.length <= 8 ? h.icon : '✓',
     color: COLORS.includes(h.color) ? h.color : 'slate',
-    schedule: { type, days },
+    schedule,
+    kinds,
+    goal: amount ? { amount, unit: cleanText(h.goal.unit, 16) } : null,
+    reminder: typeof h.reminder === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(h.reminder) ? h.reminder : null,
     order: Number.isFinite(h.order) ? h.order : 0,
     createdOn: h.createdOn,
     archivedOn: isValidKey(h.archivedOn) ? h.archivedOn : null,
@@ -177,36 +238,42 @@ export function previewImport(data) {
   const checks = data.checks.filter(c => {
     if (!c || !known.has(c.habitId) || !isValidKey(c.date)) return false;
     const id = ck(c.habitId, c.date);
-    if (store.checks.has(id) || seen.has(id)) return false;
+    if (store.entries.has(id) || seen.has(id)) return false;
     seen.add(id);
     return true;
-  }).map(c => ({ habitId: c.habitId, date: c.date }));
+  }).map(c => {
+    const r = { habitId: c.habitId, date: c.date };
+    const kind = cleanText(c.kind, 20), amount = cleanAmount(c.amount);
+    if (kind) r.kind = kind;
+    if (amount != null) r.amount = amount;
+    return r;
+  });
   return { habits, checks };
 }
 
 export async function applyImport({ habits, checks }) {
   store.habits.push(...habits);
   sortHabits();
-  checks.forEach(c => store.checks.add(ck(c.habitId, c.date)));
+  checks.forEach(({ habitId, date, ...e }) => store.entries.set(ck(habitId, date), e));
   await db.putAll(habits, checks);
   changed();
 }
 
 // Returns an undo function.
 export async function eraseAll() {
-  const snapshot = { habits: store.habits, checks: [...store.checks].map(split), settings: { ...store.settings } };
+  const snapshot = { habits: store.habits, checks: rows(), settings: { ...store.settings } };
   await db.eraseAll();
   store.habits = [];
-  store.checks = new Set();
-  store.settings = { ...DEFAULT_SETTINGS, seeded: true, firstUsedOn: todayKey(), theme: snapshot.settings.theme, weekStart: snapshot.settings.weekStart };
+  store.entries = new Map();
+  store.settings = { ...DEFAULT_SETTINGS, seeded: true, firstUsedOn: todayKey(), theme: snapshot.settings.theme, weekStart: snapshot.settings.weekStart, pushSynced: snapshot.settings.pushSynced };
   await db.saveSettings(store.settings);
   changed();
   return async () => {
     store.habits = snapshot.habits;
-    snapshot.checks.forEach(c => store.checks.add(ck(c.habitId, c.date)));
-    store.settings = snapshot.settings;
+    snapshot.checks.forEach(({ habitId, date, ...e }) => store.entries.set(ck(habitId, date), e));
+    store.settings = { ...snapshot.settings, pushSynced: store.settings.pushSynced };
     await db.putAll(snapshot.habits, snapshot.checks);
-    await db.saveSettings(snapshot.settings);
+    await db.saveSettings(store.settings);
     changed();
   };
 }
