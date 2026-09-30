@@ -13,8 +13,8 @@ _Last updated 2026-09-30. Tick is live on Cloudflare and installed on the Androi
 ## Reminders rollout
 - [x] Push to `main` (Cloudflare deploys the Worker, Durable Object and cron)
 - [x] Set the Worker secret once: `npx wrangler secret put VAPID_JWK` (value from `.dev.vars`, see README)
-- [ ] After the deploy: Android → edit a habit → Reminder on → Settings → Reminders → Send a test
-- [ ] Set a reminder a few minutes ahead and leave the app closed; check it arrives and "Mark done" ticks
+- [x] After the deploy: Android → edit a habit → Reminder on → Settings → Reminders → Send a test
+- [x] Set a reminder a few minutes ahead and leave the app closed; check it arrives and "Mark done" ticks
 - [ ] Same on an iPhone with Tick on the Home Screen
 
 ## Built on 2026-09-30
