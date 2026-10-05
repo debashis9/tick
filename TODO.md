@@ -1,14 +1,15 @@
 # Tick — to do
 
-_Last updated 2026-10-01. Tick is live on Cloudflare and installed on the Android phone.
-Encrypted cloud backup is built and tested locally (64 unit tests, 88 browser checks); it is
-not committed, pushed or deployed yet._
+_Last updated 2026-10-05. Tick is live on Cloudflare and installed on the Android phone.
+Encrypted cloud backup, the admin page, the greeting and the version label are deployed
+(`tick-v5`; 66 unit tests, 102 browser checks). Next: the phone steps below._
 
 ## Cloud backup rollout (do these in order, before pushing)
 - [x] `npx wrangler d1 create tick`, paste the `database_id` into `wrangler.jsonc` (done 2026-10-05, region APAC)
 - [x] `npx wrangler d1 migrations apply tick --remote`
 - [x] `npx wrangler secret put INVITE_SECRET` (value from `.dev.vars`). Without it anyone can create a vault
-- [ ] Commit and push; Cloudflare deploys. Open apps show "A new version of Tick is ready · Refresh"
+- [x] Commit and push; Cloudflare deploys (2026-10-05, `tick-v5` live). Open apps show "A new version of Tick is ready · Refresh"
+- [x] Invite secret set again so it matches `.dev.vars` (the first one didn't): `sed -nE 's/^INVITE_SECRET\s*=\s*"?([^"]+)"?\s*$/\1/p' .dev.vars | tr -d '\n' | npx wrangler secret put INVITE_SECRET`. Checked: the live admin route accepts the local key
 - [ ] On the Android phone: Refresh, check habits, ticks, week start, theme and reminders all survived the database upgrade
 - [ ] `node tools/admin-link.mjs https://tick.<subdomain>.workers.dev`, open that link on the phone: the admin page unlocks and the phone gets its own invite. Then Settings → Cloud backup → Turn on backup
 - [ ] Check the bottom of Today says "Tick v5", and Today asks your name once
