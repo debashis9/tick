@@ -4,15 +4,28 @@ _Last updated 2026-10-05. Tick is live on Cloudflare and installed on the Androi
 Encrypted cloud backup, the admin page, the greeting and the version label are deployed
 (`tick-v5`; 66 unit tests, 102 browser checks). Next: the phone steps below._
 
+## Next time
+- [ ] **Rethink how people get access to cloud backup.** Today, tapping Turn on backup without an
+      invite ends in "Cloud backup needs an invite link from the person who runs Tick": clumsy,
+      and it's only learned after reading the intro and saving a recovery code. Seen on the
+      Android phone, 2026-10-05. Ideas to weigh:
+      - Say it up front: without an invite, the Cloud backup row explains backup is invite-only
+        here and how to ask, instead of offering a button that fails at the last step.
+      - Fold the invite into Settings → Invite: when the admin shares the app link (or QR), it
+        carries a signed invite, so people the admin invites can back up with no second link.
+      - Drop the gate and rely on limits instead (25 MB per backup, a cap on new backups per day).
+        Simplest for people; less control over the free quota.
+      - Pie has the same gate (sharing a group); whatever is decided should suit both.
+
 ## Cloud backup rollout (do these in order, before pushing)
 - [x] `npx wrangler d1 create tick`, paste the `database_id` into `wrangler.jsonc` (done 2026-10-05, region APAC)
 - [x] `npx wrangler d1 migrations apply tick --remote`
 - [x] `npx wrangler secret put INVITE_SECRET` (value from `.dev.vars`). Without it anyone can create a vault
 - [x] Commit and push; Cloudflare deploys (2026-10-05, `tick-v5` live). Open apps show "A new version of Tick is ready · Refresh"
 - [x] Invite secret set again so it matches `.dev.vars` (the first one didn't): `sed -nE 's/^INVITE_SECRET\s*=\s*"?([^"]+)"?\s*$/\1/p' .dev.vars | tr -d '\n' | npx wrangler secret put INVITE_SECRET`. Checked: the live admin route accepts the local key
-- [ ] On the Android phone: Refresh, check habits, ticks, week start, theme and reminders all survived the database upgrade
+- [ ] On the Android phone: Refresh, check habits, ticks, week start, theme and reminders all survived the database upgrade (updated to v5 on 2026-10-05; close the app from recent apps and reopen if "new version" doesn't appear)
 - [ ] `node tools/admin-link.mjs https://tick.<subdomain>.workers.dev`, open that link on the phone: the admin page unlocks and the phone gets its own invite. Then Settings → Cloud backup → Turn on backup
-- [ ] Check the bottom of Today says "Tick v5", and Today asks your name once
+- [x] Check the bottom of Today says "Tick v5", and Today asks your name once (Android, 2026-10-05)
 - [ ] On a laptop: open Tick, Settings → Cloud backup → I have a recovery code. Check the default habits are not doubled and the ticks arrive
 - [ ] Tick on one, untick on the other; tap "Mark done" on a reminder, open Tick, check it reaches the laptop
 - [ ] Same on an iPhone with Tick on the Home Screen
