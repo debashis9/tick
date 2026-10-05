@@ -1,6 +1,6 @@
 # Habit Tracker — Product & Build Plan
 
-_Drafted 2026-09-28. Status: mockup approved; Phases 1–5 built and tested locally on 2026-09-28. Not yet deployed. See README.md to run, test and deploy._
+_Drafted 2026-09-28. Status: mockup approved; Phases 1–5 built on 2026-09-28 and deployed on Cloudflare. Encrypted cloud backup (§12) built and tested locally on 2026-10-01, not yet deployed. See README.md to run, test and deploy._
 
 Working name: **Tick** (placeholder, easy to change; it's just the manifest `name` and the header).
 
@@ -20,6 +20,7 @@ a calendar of your history for every habit.
 4. **Works offline**, starts instantly, feels like a native app when installed.
 
 ### Non-goals (for now)
+_Changed 2026-10-01: optional encrypted backup and sync were added; see §12._
 - No sync between devices (explicitly out of scope; a manual export/import file covers
   "moving to a new phone").
 - No accounts, no login, no server database, no analytics, no crash reporting.
@@ -515,6 +516,370 @@ Local-only means the device *is* the database. Plan for the ways data gets lost:
   30 minutes). Each device gets only its own reminders: the server keys records by push address.
 - **Drag to reorder on Today**: press and hold lifts the card; release to edit (as before), or
   move to drag. Up/down buttons in Settings stay for keyboards.
+
+---
+
+## 12. Encrypted cloud backup and sync (planned and built 2026-10-01)
+
+This replaces the "no sync" non-goal in §1 and the "no backend" argument in §2. It follows the
+design Sol (`../journal`, PLAN §8) already runs in production. Read that section for the
+reasoning behind the vault, the recovery code and the invite gate; this section only records
+what is reused and where Tick has to differ.
+
+### 12.1 What it promises
+- **Optional.** Without backup, Tick behaves exactly as today and talks to no backup server.
+- **Turning it on** makes a random 128-bit key, shown once as a 28-character recovery code and
+  a QR code. You confirm its last 4 characters. A second device opens the backup by typing
+  the code.
+- **Encrypted on the device.** AES-256-GCM, keys derived from the code with HKDF. The server
+  stores ciphertext under opaque ids (HMAC of the local id). Each record is padded to a
+  multiple of 256 bytes. The server never sees habit names, dates, ticks, amounts or kinds.
+- **Sync:** pull first, then push what changed here. Last write wins per record, by
+  `updatedAt`. Deletions are tombstones. It runs on open, on focus, on reconnect and a few
+  seconds after a change, and backs off when the server can't be reached (30 s, doubling, up
+  to 15 min).
+- **Creating a vault needs a signed invite link** (`INVITE_SECRET`). The Worker checks the
+  signature and expiry and stores nothing about invitees. The app itself stays open to anyone.
+- **Strict Content-Security-Policy** in `_headers`: scripts from this site only.
+
+### 12.2 What is reused from Sol
+
+| Sol file | In Tick | Change |
+|---|---|---|
+| `js/crypto.js` | `js/crypto.js` | HKDF salt `tick-vault-v1`, so a Tick code and a Sol code never derive the same keys. Nothing else. |
+| `js/sync-core.js` | `js/sync-core.js` | None. Kept byte-identical so a fix in one app copies to the other. |
+| `js/sync.js` | `js/sync.js` | Wording; also syncs after another tab or the service worker changed data (§12.6). |
+| `js/backup-ui.js` | `js/backup-ui.js` | Tick's sheet markup and wording; QR text is `tick:<code>`. |
+| `worker/index.js` (`/api/vault`, `/api/sync`) | `worker/vault.js` | The code, unchanged, in its own file (§12.9). |
+| `worker/migrations/0001_vaults.sql` | same path | Database name only. |
+| `tools/invite.mjs` | `tools/invite.mjs` | Imports `signInvite` from `worker/vault.js`. |
+| `_headers`, `js/boot-theme.js` | same paths | `tick.theme` key. |
+| `tests/crypto.test.js`, `tests/sync.test.js`, `tests/helpers/d1.js` | same paths | Sync test rewritten around habits and checks (§12.12). |
+
+New in Tick: `js/records.js`, a pure module (no IndexedDB, no DOM) that holds everything about
+records that sync: ids, the wire form, stamping, tombstones, applying remote records, the merge
+on linking, and the upgrade from today's schema. `store.js` uses it; so do the tests.
+
+### 12.3 Records
+
+Three kinds sync. Each has `id`, `kind`, `updatedAt`, and becomes a tombstone when deleted.
+
+| Kind | Id | Fields (inside the ciphertext) |
+|---|---|---|
+| `habit` | the habit's id, `h…` | name, icon, color, schedule, kinds, goal, order, createdOn, archivedOn |
+| `check` | `c:<habitId>:<date>` | at, amount?, pick? (the kind picked: Walk / Jog / Run) |
+| `prefs` | `s:prefs` | weekStart |
+| tombstone | same id | `{ id, kind, updatedAt, deleted: true }` and nothing else |
+
+- **A check's id is made from its habit and date**, so two devices that tick the same habit on
+  the same day write the same server row. The server sees only the HMAC of that id.
+  Habit ids can't contain `:` (they match `[\w-]{1,40}`), so the id splits back unambiguously.
+- **A check already has a field called `kind`** (the picked Walk / Jog / Run). In the wire form
+  it travels as `pick`, so `kind` can mean the record type as in Sol. On the device and in
+  backup files it stays `kind`; nothing that reads checks today changes.
+- **Unticking writes a tombstone** in place of deleting the row. So does clearing an amount.
+  Ticking again later replaces the tombstone.
+- **Deleting a habit tombstones the habit and every one of its checks**, in one transaction.
+  Undo writes them all back with a new `updatedAt`, so the undo wins on every device.
+- **A check whose habit is missing or deleted is ignored** everywhere (not shown, not counted,
+  not exported). This happens when one device deletes a habit while another, offline, ticks
+  it. Devices do not "repair" such checks by tombstoning them: a repair made halfway through
+  receiving an undo would delete ticks the user just restored. (A habit merged into another
+  on linking is the one exception, §12.7: its tombstone says where the ticks belong.)
+- **A habit's `reminder` time does not sync** (§12.5). It stays on the habit row on this
+  device and is left out of the wire form. Saving a habit when only its reminder changed does
+  not bump `updatedAt`, so it can't overwrite a rename made on another device.
+- **Habit order** is the `order` number on each habit, so it syncs with the habit. Two devices
+  can both add a habit offline and pick the same number, so habits sort by `order`, then
+  `createdOn`, then `id`, which is the same on every device.
+- **Amounts are last-write-wins too.** An amount is the day's total, so if two devices log the
+  same habit on the same day before syncing, the later total stands; they are not added up.
+
+Sizes: a check encrypts to about 380 bytes on the server, a habit to about 730. Five habits
+ticked every day is about 0.7 MB a year against the 25 MB quota per vault.
+
+### 12.4 On the device: IndexedDB version 2
+
+| Store | Key | Holds | Synced |
+|---|---|---|---|
+| `habits` | `id` | habit rows, now with `updatedAt`; tombstones `{ id, deleted, updatedAt }` | yes (except `reminder`) |
+| `checks` | `[habitId, date]` | check rows, now with `updatedAt`; tombstones `{ habitId, date, deleted, updatedAt }` | yes |
+| `settings` | `id` | one row, `prefs`: `{ weekStart, updatedAt }` | yes |
+| `dirty` (new) | `id` | `{ id, updatedAt }` for records changed here and not uploaded yet | no |
+| `local` (new) | `key` | `settings` (this device's own), `vault` (backup state), `pushTest` | no |
+
+`habits` and `checks` keep their stores and keys. Every write stamps `updatedAt` (always moving
+forward: `max(now, previous + 1)`) and puts a `dirty` mark in the same transaction. This
+happens whether or not backup is on, as in Sol.
+
+**Upgrade from version 1** runs inside the one `onupgradeneeded` transaction, so it either
+completes or leaves the old database untouched:
+1. Create `dirty` and `local`.
+2. Move the `app` settings row to `local/settings` and the `pushTest` marker to `local/pushTest`.
+3. If the week starts on Sunday (not the default), write `settings/prefs` with that choice. If it is the
+   default, write nothing: a setting nobody chose must not override a real choice on another
+   device.
+4. Stamp every habit and check that has no `updatedAt`:
+   - a check gets its `at` (the moment it was ticked);
+   - a habit gets the start of its `createdOn` day plus the time of day the upgrade ran.
+
+   These stamps are deliberately old. Any real edit made after the upgrade, on any device, is
+   newer and wins. The time-of-day part keeps two devices that both carry the same habit (moved
+   earlier with a backup file) from stamping it identically: with equal stamps and different
+   contents, last-write-wins would never settle.
+5. Nothing is deleted and no row is rewritten beyond gaining `updatedAt`.
+
+The row arithmetic is a pure function in `records.js` (`upgradeV1(rows, now)`), tested in Node.
+The real upgrade is tested in a browser, from a version 1 database built by the test (§12.12).
+
+Also: the database now closes itself on `versionchange`, so a later upgrade is not blocked by
+another open tab. (For this first upgrade an old tab still blocks it, with today's message.)
+On load, a row found without `updatedAt` is stamped and marked dirty; that covers a tick
+written by the old service worker during an update.
+
+### 12.5 What syncs and what stays on the device
+
+| Setting | Where | Why |
+|---|---|---|
+| Habits, their order, archived state | synced | They are the data. |
+| Ticks, amounts, picked kinds | synced | They are the data. |
+| Week starts on | synced (`s:prefs`) | Changes how weekly habits are judged; two devices must agree or they show different streaks. |
+| Theme | device | A phone and a laptop are often set differently. |
+| Reminder time per habit | device | A reminder is "notify this device". Synced, every device with notifications on would buzz. |
+| Push subscription, `pushSynced` | device | Tied to this browser. |
+| Backup state: code, cursor, last sync, last error | device | It is the key; it must never be uploaded. |
+| Invite token, install tip, backup-file nudge, `firstUsedOn` | device | About this install. |
+
+Reminders are untouched on the server side: the Durable Object, the cron and `/api/push/*` do
+not change. In the app, `push.js` also re-checks its reminder times after remote changes,
+since a habit deleted or archived on another device may have had a reminder here.
+
+### 12.6 The service worker writes too
+
+`sw.js` ticks a habit from the notification's "Mark done" button, straight into IndexedDB.
+- That write now stamps `updatedAt` and puts the `dirty` mark `c:<habitId>:<date>` in the same
+  transaction. If the old row is a tombstone, it is replaced, not merged.
+- Reading what is due skips tombstoned habits and checks. Until now "the row exists" meant
+  done; that is no longer true anywhere.
+- It reads the week start from `settings/prefs` and the test marker from `local/pushTest`.
+- **An update can reach the service worker before the page has upgraded the database.** So
+  the worker checks the database version and reads the old places when it is still version 1
+  (and skips the `dirty` store, which doesn't exist yet). The upgrade keeps an `updatedAt` it
+  finds, and turning backup on marks everything dirty anyway.
+- The page hears about the tick over the BroadcastChannel as today, reloads, and now also
+  schedules a sync if anything is dirty. With the app closed, the tick uploads the next time
+  Tick opens.
+- `/api/` requests bypass the worker's cache, as in Sol.
+
+The id format `c:<habitId>:<date>` therefore lives in two places (`records.js` and `sw.js`,
+which is a classic script and can't import modules). Both carry a comment pointing at the other.
+
+### 12.7 Linking a device that already has habits
+
+Every fresh install seeds "Walk / Jog / Run" and "Read a book" with new random ids. So a second
+device always has two habits of its own when the code is typed in, often with today's ticks.
+Sol's rule ("keep everything, upload it too") would leave two of each.
+
+On linking, after the first pull and before the first push:
+- A habit that was on this device and a habit from the backup with the **same name** (ignoring
+  case and spaces at the ends, archived habits left alone) are combined. **The older one
+  survives**: earlier `createdOn`, then the smaller id. The rule doesn't depend on which
+  device applies it or on which copy was in the backup first, so every device picks the same
+  survivor. It also keeps the earliest start date, which matters because days before
+  `createdOn` are "not started".
+- The other habit's ticks move to the survivor for every day the survivor has no tick. The
+  other habit becomes a tombstone that **names the survivor** (`mergedInto`), and its checks
+  become tombstones.
+- **Ticks follow that pointer on every device.** After each pull, a live check on a habit that
+  was merged away is moved to the survivor (following a chain if there is one). This is what
+  makes two devices linking at the same moment agree: if one merges A into B while the other
+  merges C into A, the ticks from C still end up on B.
+- A reminder time set on this device for the habit that went away is kept on the survivor.
+- Any other local habit is kept and uploaded. Habits sort by `order`, then `createdOn`, then
+  `id`, so equal order numbers from two devices fall the same way everywhere.
+- The sheet says so before you confirm: "Habits already on this device are kept. One with the
+  same name as a habit in your backup is combined with it."
+
+This only happens on linking. Two linked devices that each add "Gym" get two habits. One gap
+remains: two devices that link in the same moment to a backup that has no habit of that name
+both upload theirs, and you get two; delete or archive one.
+
+### 12.8 Backup file
+
+Export and restore keep working and keep their promise: restore adds what is missing and
+changes nothing that is here.
+- The file becomes `version: 3`: habits and checks carry `updatedAt`. Tombstones are not
+  exported; the file is a snapshot of what exists.
+- **Missing here** now means "not here, or deleted here". Restoring a file after deleting a
+  habit by mistake brings it back, on every device.
+- A record that was never here keeps the file's `updatedAt`. If a newer copy is in the cloud
+  and hasn't arrived yet, the cloud copy still wins. A record restored over a tombstone is a
+  new edit, stamped now.
+- Version 2 files (no `updatedAt`) are still accepted and get an old stamp, as in the upgrade.
+- **Erase all data** clears this device and turns backup off here. The cloud copy stays;
+  Settings says so, and deleting it is under Turn off. Undo puts back the data and the link.
+- The 30-day "back up your history" nudge on Today is not shown while cloud backup is on.
+
+### 12.9 Worker and config
+
+- `worker/vault.js`: Sol's vault code as it is (`api`, `signInvite`, `validInvite`). It imports
+  nothing from Cloudflare, so Node can load it for the tests and for `tools/invite.mjs`.
+  `worker/index.js` can't be loaded in Node because it imports `cloudflare:workers`.
+- `worker/index.js`: one new line in `fetch`: `/api/vault` and `/api/sync` go to `vault.js`.
+  Everything else under `/api/` goes to the reminder code as today. The `Reminders` class,
+  the push routes and `scheduled` are not edited.
+- `wrangler.jsonc`: a `d1_databases` binding `DB` (database `tick`, migrations in
+  `worker/migrations`) beside the Durable Object binding and the cron. Its own database and
+  its own `INVITE_SECRET`, not Sol's: a Sol invite does not open Tick.
+- `npm run dev`: applies the migration locally, then `wrangler dev --port 8788` (Sol uses
+  8787), both with `--persist-to ~/.cache/tick-wrangler`. Kept inside the project, every
+  database write looks like a file change and wrangler reloads in a loop.
+- `.dev.vars` gains a local `INVITE_SECRET` beside `VAPID_JWK`. `.assetsignore` gains `tools`.
+- Quota and limits as Sol: 25 MB per vault, 500 records per pull page, 200 per push.
+
+### 12.10 Screens and wording
+
+- **Settings → Cloud backup**, a new group above "Your data": Off / On / Needs attention, when
+  it last synced, and the buttons from Sol (Turn on backup, I have a recovery code; then Back
+  up now, Show recovery code, Turn off…). The four sheets are Sol's, in Tick's sheet style.
+  There is no mockup for these; I'll screenshot them for you before calling it done.
+- An invite link (`…/?invite=…`) is saved on the device and removed from the address bar.
+  Settings → Invite keeps sharing the plain app link; a backup invite comes from
+  `tools/invite.mjs`.
+- Wording that stops being true once backup is on, and what replaces it:
+  - nav: "Everything you track stays on this device." → "Only your devices can read what you track."
+  - Settings → Your data: "Stored on this device only" → adds "and encrypted in your cloud backup" when on.
+  - Settings → Privacy: gains what the server can and can't see with backup on.
+- "The server can't see": habit names, which days you ticked, amounts and kinds.
+  "The server can see": that a backup exists, how many records it has and their sizes, and
+  when your devices sync (so, roughly when you use Tick).
+- A sync never redraws the list in the middle of a drag; it redraws when the drag ends.
+
+### 12.11 Content-Security-Policy
+
+`_headers`, as Sol: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; worker-src 'self';
+manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';
+form-action 'none'`, plus `nosniff`, `Referrer-Policy: no-referrer` and a Permissions-Policy.
+- The inline theme script in `index.html` moves to `js/boot-theme.js`.
+- `style-src` needs `'unsafe-inline'`: habit colors are set with `style="--c:…"` on every card.
+- Push subscription is done by the browser, not by a page request, so `connect-src 'self'`
+  doesn't affect reminders.
+
+### 12.12 Tests
+
+- `tests/crypto.test.js`: Sol's, with Tick records (code round-trip, typo checksum, key
+  derivation, padding to 256, tamper and wrong-key failures).
+- `tests/records.test.js`: the version 1 → 2 upgrade from today's rows (nothing lost, stamps
+  as in §12.4, default week start writes no record, rows already stamped are left alone);
+  wire form round-trip (reminder left out, `kind` ↔ `pick`, tombstones); check ids.
+- `tests/sync.test.js`: two devices built on `records.js`, syncing through the real Worker
+  code over `node:sqlite`. Ticks; unticks as tombstones; the same day ticked on both devices
+  lands on one server row; a habit delete takes its checks with it, and undo brings them back
+  on the other device; a tick written the way the service worker writes it arrives; linking
+  a device with seeded habits combines them; newer edit wins; paging; invites; vault delete;
+  malformed pushes. And the database dump contains no habit name, date, kind, amount unit,
+  local id or auth secret.
+- `tests/e2e/smoke.mjs`, run against `npm run dev`:
+  - starts from a **version 1 database** created in the browser before the app loads, and
+    checks habits, ticks, kinds, week start and theme survive the upgrade;
+  - the existing checks;
+  - backup refused without an invite; turned on with one; a second browser context opens it
+    with the code and sees the habits and ticks, with no duplicate default habits; an untick
+    and a "Mark done" from the service worker travel across; the local D1 dump has no
+    readable data;
+  - backup file export → erase → restore still passes.
+  Against the plain static server (no API) the backup checks report SKIP.
+
+`npm test` stays dependency-free. That is why the upgrade is tested as a pure function plus a
+real browser, and not with a fake IndexedDB package.
+
+### 12.13 Decisions, and the alternatives that lost
+
+| Decision | Lost | Why |
+|---|---|---|
+| Keep the `habits` and `checks` stores; add `updatedAt`, `dirty`, `local` | Sol's single `records` store | The service worker and the backup file read these stores. Moving every row is a riskier upgrade for no gain. |
+| Check id `c:<habitId>:<date>` | Random id per check | Two devices ticking the same day would make two rows, and "done" would be counted twice. |
+| Tombstones always, backup on or off | Delete rows while backup is off | One code path in three writers (store, service worker, restore). A tombstone is about 80 bytes. |
+| Mark dirty always | Only while backup is on | Same reason, and no way to miss an upload when backup is turned on mid-session. |
+| Old stamps on upgrade | Stamp with the upgrade time | A device that upgrades later would beat real edits made earlier on another device. |
+| Don't sync reminder times | Sync the whole habit | Every device with notifications on would get every reminder. |
+| Sync week start | Per device | Devices would disagree about streaks and weekly targets. |
+| Order as a number on each habit | One synced "order" record | The backup file, the service worker and sorting already use `habit.order`. Per-habit last-write-wins can mix two simultaneous reorders, which the fixed tie-break makes at least identical everywhere. |
+| Combine same-named habits on linking | Keep both, as Sol does | Every new device seeds the same two habits. |
+| The older habit survives a combine | The backup's habit survives | "Whichever was uploaded first" depends on timing; "older" is the same answer on every device, and keeps the earliest start date. |
+| Ignore checks of deleted habits | Tombstone them on sight | A repair racing an undo deletes restored ticks. |
+| `sync-core.js` unchanged | Add a tie-break for equal `updatedAt` | Equal stamps only come from the upgrade, and §12.4 avoids them there. |
+| Tick uploads a "Mark done" on next open | Sync from the service worker | It is a classic script; it would need its own copy of the crypto and sync code. |
+| Upgrade tested as a pure function + in a real browser | `fake-indexeddb` dev dependency | Keeps `npm test` with no dependencies, and a real browser is the stronger test. |
+| Own D1 database and invite secret | Share Sol's | Separate apps, separate quotas, and deleting one never touches the other. |
+| Vault code in `worker/vault.js` | Inline in `worker/index.js` | Node can't import `cloudflare:workers`; tests and the invite tool need the vault code. |
+
+### 12.14 Limits worth knowing
+- **Lose the recovery code and every device, and the backup can't be opened by anyone.**
+- **On the device the data is plaintext in IndexedDB**, as today. The phone's lock protects it.
+- **Last write wins by each device's clock.** A device whose clock is far ahead wins until
+  the others catch up.
+- **The server sees timing.** A sync a few seconds after each tick shows when you use Tick,
+  though not what you ticked.
+- **Reminders and backup are separate tables with no shared id.** The reminder table still
+  holds push address, reminder times and time zone (§11). Only request logs (IP address,
+  time), which Cloudflare keeps, could connect a vault to a push address.
+- **Any web app trusts the code it is served.** The CSP narrows that to this site's own files.
+
+### 12.15 Build order
+1. `records.js` and its tests (ids, wire form, upgrade).
+2. `db.js` version 2 and `store.js` on top of `records.js`; existing smoke test passes, plus
+   the upgrade-from-version-1 check.
+3. `sw.js` (tombstones, stamp, dirty, both schema versions), `VERSION` → `tick-v5`, new files
+   in `SHELL`.
+4. `crypto.js`, `sync-core.js`, `worker/vault.js`, migration, `tools/invite.mjs`, sync tests.
+5. `sync.js`, `backup-ui.js`, Settings, wording, `_headers`, `boot-theme.js`.
+6. Backup file version 3. End-to-end with two browser contexts.
+7. README, TODO. No deploy and no push.
+
+### Changes made while building
+- **Erase keeps the week start and the invite** on the device, as it already kept the theme.
+- **A habit that was deleted elsewhere can't be brought back by saving a stale edit sheet.**
+  Saving or archiving a habit that is no longer live does nothing.
+- **A row found without `updatedAt` on load is stamped and marked for upload.** This covers a
+  tick written by the previous service worker in the moment between a hard reload and the new
+  worker taking over.
+- **The simultaneous-link gap stays** (§12.7, last paragraph). It is listed in TODO.md.
+- **The smoke test prepares its version 1 database from `/api/blank`**: once the service
+  worker is installed it answers every page load with the app, and `/api/` is the one path it
+  leaves alone.
+
+Deploy, to do together afterwards: `npx wrangler d1 create tick` and paste the id into
+`wrangler.jsonc`; `npx wrangler d1 migrations apply tick --remote`;
+`npx wrangler secret put INVITE_SECRET` **before** pushing (without it anyone can create a
+vault); then push.
+
+---
+
+## 13. Version label, name and greeting, admin page (2026-10-05)
+
+Taken from Pie (`../split`), which built them the same day; the code is Pie's, in Tick's style.
+
+- **Version.** The service worker answers a `version` message with its `VERSION`; before it is
+  in charge the app reads `sw.js`. Shown as "Tick v5" at the bottom of Today and "This is Tick
+  v5." at the bottom of Settings. (Pie puts it in a fixed corner; Tick's bottom nav is there.)
+- **Name and greeting.** Today asks "What should we call you?" once, with "Not now". The name
+  is set or changed in Settings → Preferences. Today then says "Good morning / afternoon /
+  evening, <name>", or "Hi, <name>" from 10 pm to 5 am, above the date. **The name stays on
+  the device; it doesn't sync.** It would have to be its own record: inside `s:prefs`, a second
+  device naming itself on first open would overwrite the week start chosen elsewhere. The
+  backup file carries it, and a restore sets it if the device has none. Erase keeps it.
+- **Admin page** (`#admin`, no nav button; Settings shows an Admin row once unlocked). Unlocks
+  with the admin key, which is `INVITE_SECRET`, typed or from `tools/admin-link.mjs` (the key
+  sits after `#`, so it never reaches a server, and the app takes it out of the address at
+  once). It makes invite links (7–90 days) and shows the backups on the server: count, records,
+  bytes, created and last-changed dates, and a 6-character id prefix. `GET /api/admin/stats` in
+  `worker/vault.js` compares SHA-256 hashes of the key, so timing says nothing about it. A
+  server without `INVITE_SECRET` has no admin. Unlocking gives the device a one-year invite.
+  The key is kept in this device's own settings: never synced, never in a backup file.
+- Not shown on the admin page: reminder subscriptions. They live in the Durable Object, and the
+  reminder code is left as it is.
 
 ---
 

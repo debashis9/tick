@@ -6,6 +6,28 @@ import { store, has, entry, hasEntries, setCheck, setEntry } from './store.js';
 
 export const ws = () => store.settings.weekStart;
 
+// Which version of the app this device is running: the one its service worker cached (the
+// VERSION in sw.js, bumped on every deploy). Before a service worker is in charge (the very
+// first visit, or a browser without one), it's read from the server's sw.js. 'tick-v5' → 'v5'.
+// `appVersion.text` holds the answer once known, so views can draw it without waiting.
+let versionAsked;
+export function appVersion() {
+  versionAsked ||= (async () => {
+    const sw = navigator.serviceWorker;
+    if (sw?.controller) {
+      const v = await new Promise(resolve => {
+        const timer = setTimeout(() => resolve(null), 1500);
+        sw.addEventListener('message', function on(e) { if (e.data?.version) { clearTimeout(timer); sw.removeEventListener('message', on); resolve(e.data.version); } });
+        sw.controller.postMessage('version');
+      });
+      if (v) return v;
+    }
+    try { return /VERSION = '([^']+)'/.exec(await (await fetch('sw.js', { cache: 'no-store' })).text())?.[1] || null; } catch { return null; }
+  })().then(v => (appVersion.text = v ? v.replace(/^tick-/, '') : null));
+  return versionAsked;
+}
+appVersion.text = null;
+
 export const view = {
   tab: 'today',
   selDate: todayKey(),

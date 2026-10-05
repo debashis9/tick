@@ -32,3 +32,12 @@ export const startOfWeek = (d, weekStart) => addDays(d, -weekIdx(d, weekStart));
 export const orderedDays = weekStart => [0, 1, 2, 3, 4, 5, 6].map(i => (weekStart + i) % 7);
 
 export const isValidKey = k => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k) && key(parse(k)) === k;
+
+// The greeting on Today. From 10 at night until 5 it's a plain "Hi": "Good evening" at 2 am
+// reads wrong, and "Good night" is a goodbye. (The same rule as Pie.)
+export function greeting(hour = new Date().getHours()) {
+  if (hour >= 5 && hour < 12) return 'Good morning';
+  if (hour >= 12 && hour < 17) return 'Good afternoon';
+  if (hour >= 17 && hour < 22) return 'Good evening';
+  return 'Hi';
+}

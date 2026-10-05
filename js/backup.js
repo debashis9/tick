@@ -1,7 +1,8 @@
-// Backup = one JSON file the user keeps. It's also how someone moves to a new phone.
+// Backup file = one JSON file the user keeps. It works without cloud backup, and beside it.
+// Restoring adds what is missing here (including what was deleted here) and changes nothing else.
 
 import { todayKey } from './dates.js';
-import { exportData, previewImport, applyImport, saveSettings } from './store.js';
+import { store, exportData, previewImport, applyImport, saveSettings } from './store.js';
 import { ICON, plural, openSheet, render, toast, storageError } from './ui.js';
 
 // Returns true once a backup was handed to the user.
@@ -54,6 +55,9 @@ export async function importBackup(file) {
     if (!e.target.closest('[data-restore]')) return;
     try {
       await applyImport(p);
+      // The name you're greeted by comes back too, unless this device already has one.
+      const name = typeof data.settings?.name === 'string' ? data.settings.name.trim().slice(0, 40) : '';
+      if (name && !store.settings.name) await saveSettings({ name, nameAsked: true });
       close(); render();
       toast(`Restored ${parts.join(' and ')}`);
     } catch (err) { storageError(err); }

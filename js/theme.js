@@ -1,5 +1,5 @@
-// Theme lives in settings (IndexedDB), with a localStorage mirror so index.html can
-// apply it before the first paint instead of flashing the wrong theme.
+// Theme lives in this device's settings (IndexedDB), with a localStorage mirror so
+// boot-theme.js can apply it before the first paint instead of flashing the wrong theme.
 
 const COLORS = { light: '#F4F5F2', dark: '#0D0F0E' };
 

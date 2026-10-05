@@ -1,7 +1,10 @@
 // Cloudflare Workers config. Tick is static files, served straight from assets. The Worker
-// code in worker/ only runs for /api/* (reminder sign-up) and the once-a-minute cron that
-// sends reminders. Workers Builds runs `npx wrangler deploy` on every push to main.
-// Secret (set once, not in git): VAPID_JWK, the private key reminders are signed with.
+// code in worker/ only runs for /api/* (reminder sign-up, encrypted cloud backup) and the
+// once-a-minute cron that sends reminders. Workers Builds runs `npx wrangler deploy` on every
+// push to main.
+// Secrets (set once, not in git): VAPID_JWK, the private key reminders are signed with, and
+// INVITE_SECRET, which signs invite links for cloud backup. Without INVITE_SECRET, anyone can
+// create a backup vault.
 {
   "name": "tick",
   "main": "worker/index.js",
@@ -15,5 +18,15 @@
     "bindings": [{ "name": "REMINDERS", "class_name": "Reminders" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Reminders"] }],
-  "triggers": { "crons": ["* * * * *"] }
+  "triggers": { "crons": ["* * * * *"] },
+  // Cloud backup: ciphertext only (worker/vault.js).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tick",
+      // From `npx wrangler d1 create tick` (see README → Deploy).
+      "database_id": "5956b5e3-fe74-4cb3-bee1-fb5035bb11cb",
+      "migrations_dir": "worker/migrations"
+    }
+  ]
 }

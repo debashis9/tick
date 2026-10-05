@@ -1,0 +1,8 @@
+# Security headers for the app's files. A strict policy matters more than usual here: cloud
+# backup is only as private as the code the browser runs, so the page may load scripts, styles
+# and fonts from this site alone, and may only talk to this site.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()

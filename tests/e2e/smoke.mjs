@@ -1,26 +1,151 @@
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
+import os from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 // End-to-end smoke test. Not part of `npm test` (it needs a browser):
 //   npm i --no-save playwright-core
-//   npm run serve        # in another terminal (serves on :8420)
-//   CHROME_PATH=/path/to/chrome node tests/e2e/smoke.mjs
-import os from 'node:os';
-const SP = process.env.OUT_DIR || os.tmpdir(), URL = process.env.APP_URL || 'http://localhost:8420/';
+//   npm run dev          # in another terminal: the app and the Worker on :8788, with a local D1
+//   WRANGLER="npx wrangler" PERSIST_TO=~/.cache/tick-wrangler CHROME_PATH=/path/to/chrome node tests/e2e/smoke.mjs
+// Against a plain static server (npm run serve, APP_URL=http://localhost:8420/) there is no
+// backup API, and the cloud backup checks report SKIP.
+const SP = process.env.OUT_DIR || os.tmpdir(), URL = process.env.APP_URL || 'http://localhost:8788/';
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH, args: ['--no-sandbox'] });
 const results = [];
 const check = (name, ok, extra = '') => { results.push(`${ok ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`); };
+const skip = name => { results.push(`SKIP ${name}`); };
+const hasApi = await fetch(URL + 'api/sync').then(r => r.status === 401, () => false);
 
-const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, acceptDownloads: true });
-const page = await ctx.newPage();
 const errors = [];
-page.on('pageerror', e => errors.push('pageerror: ' + e.message));
-// Test contexts are incognito, where Chrome logs that it has no Push API; real installs do.
-page.on('console', m => { if (m.type() === 'error' && !m.text().includes('Push API in incognito')) errors.push('console: ' + m.text()); });
+async function device(label) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, acceptDownloads: true });
+  const page = await ctx.newPage();
+  page.on('pageerror', e => errors.push(`${label} pageerror: ${e.message}`));
+  // Test contexts are incognito, where Chrome logs that it has no Push API; real installs do.
+  // Chrome also logs every /api/ response that isn't a success (the blank page used to prepare
+  // a database, the favicon it asks for, and the backup server refusing a vault without an invite).
+  page.on('console', m => { if (m.type() === 'error' && !m.text().includes('Push API in incognito') && !(m.text().includes('Failed to load resource') && /\/api\/|\/favicon\.ico$/.test(m.location().url))) errors.push(`${label} console: ${m.text()} ${m.location().url}`); });
+  return { ctx, page };
+}
+const pad = n => String(n).padStart(2, '0');
+const dayKey = (back = 0) => { const d = new Date(); d.setDate(d.getDate() - back); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+const serviceWorker = async ctx => ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 5000 }).catch(() => null);
+// Everything in the app's database, as the page sees it.
+const dumpDB = page => page.evaluate(() => new Promise((resolve, reject) => {
+  const r = indexedDB.open('tick');
+  r.onerror = () => reject(r.error);
+  r.onsuccess = async () => {
+    const db = r.result, out = { version: db.version, stores: [...db.objectStoreNames] };
+    for (const name of out.stores) out[name] = await new Promise(res => { db.transaction(name).objectStore(name).getAll().onsuccess = e => res(e.target.result); });
+    db.close();
+    resolve(out);
+  };
+}));
+
+// ---------- upgrade: a database made by the version before cloud backup ----------
+// The app is installed (so its service worker is running), then its database is replaced with a
+// version 1 database, as an existing install has when this update reaches it.
+{
+  const { ctx, page: pu } = await device('upgrade');
+  await ctx.grantPermissions(['notifications']);
+  await pu.goto(URL);
+  await pu.waitForSelector('.card');
+  const sw = await serviceWorker(ctx);
+  await pu.waitForFunction(() => navigator.serviceWorker?.controller || null, null, { timeout: 5000 }).catch(() => {});
+  await pu.goto(URL + 'api/blank');   // same origin, no app code (the service worker leaves /api/ alone)
+  const days = [dayKey(3), dayKey(2), dayKey(1)];
+  await pu.evaluate(({ days }) => new Promise((resolve, reject) => {
+    const del = indexedDB.deleteDatabase('tick');
+    del.onerror = del.onblocked = () => reject(new Error('could not delete the database'));
+    del.onsuccess = () => {
+      const r = indexedDB.open('tick', 1);
+      r.onupgradeneeded = () => {
+        const db = r.result;
+        db.createObjectStore('habits', { keyPath: 'id' });
+        db.createObjectStore('checks', { keyPath: ['habitId', 'date'] }).createIndex('habitId', 'habitId');
+        db.createObjectStore('settings', { keyPath: 'id' });
+      };
+      r.onerror = () => reject(r.error);
+      r.onsuccess = () => {
+        const db = r.result, t = db.transaction(['habits', 'checks', 'settings'], 'readwrite');
+        const habit = (id, name, order, extra) => ({ id, name, icon: '📖', color: 'blue', schedule: { type: 'daily', days: [] }, kinds: [], goal: null, reminder: null, order, createdOn: days[0], archivedOn: null, ...extra });
+        t.objectStore('habits').put(habit('hwalk', 'Walk / Jog / Run', 0, { kinds: ['Walk', 'Jog', 'Run'], color: 'green', reminder: '00:00' }));
+        t.objectStore('habits').put(habit('hread', 'Read a book', 1, { goal: { amount: 20, unit: 'pages' } }));
+        t.objectStore('checks').put({ habitId: 'hwalk', date: days[1], at: Date.now() - 2 * 864e5, kind: 'Jog' });
+        t.objectStore('checks').put({ habitId: 'hwalk', date: days[2], at: Date.now() - 864e5 });
+        t.objectStore('checks').put({ habitId: 'hread', date: days[2], at: Date.now() - 864e5, amount: 22 });
+        t.objectStore('settings').put({ id: 'app', weekStart: 0, theme: 'dark', seeded: true, firstUsedOn: days[0], lastBackupOn: days[1], backupSnoozedUntil: null, installTipDismissed: true, pushSynced: null, schemaVersion: 2 });
+        t.oncomplete = () => { db.close(); resolve(); };
+        t.onerror = () => reject(t.error);
+      };
+    };
+  }), { days });
+
+  // The updated service worker can run before the page has upgraded the database.
+  if (sw) {
+    const shown = await sw.evaluate(async today => {
+      await markDone('hread', today);
+      await remind();
+      const ns = await self.registration.getNotifications();
+      ns.forEach(n => n.close());
+      return ns.map(n => `${n.title} | ${n.body}`);
+    }, dayKey());
+    check('service worker reads a version 1 database', shown.length === 1 && shown[0].includes('Walk / Jog / Run'), shown.join(' / '));
+    const v1 = await dumpDB(pu);
+    check('service worker leaves the database at version 1', v1.version === 1 && v1.checks.length === 4 && v1.checks.some(c => c.date === dayKey() && c.updatedAt > 0));
+  } else check('service worker available for the upgrade check', false);
+
+  await pu.goto(URL);
+  await pu.waitForSelector('.card');
+  const after = await dumpDB(pu);
+  check('database upgrades to version 2 with the new stores', after.version === 2 && ['dirty', 'local'].every(n => after.stores.includes(n)), after.stores.join(', '));
+  check('upgrade keeps every habit and tick', after.habits.length === 2 && after.checks.length === 4 && after.checks.some(c => c.kind === 'Jog') && after.checks.some(c => c.amount === 22) && after.habits.find(h => h.id === 'hwalk').reminder === '00:00');
+  check('upgrade stamps every row', [...after.habits, ...after.checks].every(r => r.updatedAt > 0 && r.updatedAt <= Date.now()), JSON.stringify(after.habits.map(h => h.updatedAt)));
+  const local = Object.fromEntries(after.local.map(r => [r.key, r.value]));
+  check('upgrade moves this device\'s settings to local', local.settings?.theme === 'dark' && local.settings.lastBackupOn === days[1] && local.settings.installTipDismissed === true && !('weekStart' in local.settings) && !after.settings.some(r => r.id === 'app'));
+  check('upgrade keeps the week start as a synced setting', after.settings.length === 1 && after.settings[0].id === 'prefs' && after.settings[0].weekStart === 0 && after.settings[0].updatedAt > 0);
+  check('upgraded app shows the habits', (await pu.$$eval('.card .name', els => els.map(e => e.textContent))).join('|') === 'Walk / Jog / Run|Read a book');
+  check('upgraded app keeps the theme', (await pu.getAttribute('html', 'data-theme')) === 'dark');
+  check('tick made from a notification before the upgrade is kept', await pu.locator('.card', { hasText: 'Read a book' }).evaluate(e => e.classList.contains('done')));
+  await pu.locator('.sd').nth(5).click();
+  check('upgraded app keeps past ticks and amounts', (await pu.locator('.card', { hasText: 'Read a book' }).locator('.meta').textContent()).startsWith('22 / 20 pages')
+    && await pu.locator('.card', { hasText: 'Walk' }).evaluate(e => e.classList.contains('done')));
+  await pu.click('[data-tab="settings"]');
+  check('upgraded app keeps the week start', (await pu.getAttribute('[data-ws="0"]', 'aria-pressed')) === 'true');
+  // A change after the upgrade is stamped now and marked for upload.
+  await pu.click('[data-tab="today"]');
+  await pu.click('[data-act="today"]');
+  await pu.locator('.card', { hasText: 'Walk' }).click();
+  await pu.waitForTimeout(300);
+  const edited = await dumpDB(pu);
+  const mark = edited.dirty.find(d => d.id === `c:hwalk:${dayKey()}`);
+  check('a tick after the upgrade is marked for upload', !!mark && Date.now() - mark.updatedAt < 60e3 && edited.checks.find(c => c.habitId === 'hwalk' && c.date === dayKey()).updatedAt === mark.updatedAt);
+  await ctx.close();
+}
+
+const { ctx, page } = await device('A');
 
 await page.goto(URL);
 await page.waitForSelector('.card');
 const names = await page.$$eval('.card .name', els => els.map(e => e.textContent));
 check('seeds two default habits', names.join('|') === 'Walk / Jog / Run|Read a book', names.join(', '));
+
+// The name, asked once on Today, and the greeting it makes.
+check('asks for a name on first open', await page.isVisible('#name-form'));
+check('no greeting before a name', !(await page.isVisible('.hello')));
+await page.fill('#name-in', 'Debashis');
+await page.click('#name-form button[type="submit"]');
+await page.waitForSelector('.hello');
+check('greets by name with the time of day', /^(Good (morning|afternoon|evening)|Hi), Debashis$/.test(await page.textContent('.hello')), await page.textContent('.hello'));
+check('the name card goes away', !(await page.isVisible('#name-form')));
+await page.waitForFunction(() => /^Tick v\d+$/.test(document.querySelector('#version')?.textContent || ''), null, { timeout: 5000 }).catch(() => {});
+check('the version is shown on Today', /^Tick v\d+$/.test(await page.textContent('#version').catch(() => '')), await page.textContent('#version').catch(() => 'missing'));
+await page.click('[data-tab="settings"]');
+check('Settings says which version this is', /^This is Tick v\d+\.$/.test(await page.textContent('#set-version').catch(() => '')));
+await page.fill('#set-name', 'Deb');
+await page.click('#name-set button');
+await page.click('[data-tab="today"]');
+check('the greeting follows a name change', (await page.textContent('.hello')).endsWith(', Deb'));
 
 const read = page.locator('.card', { hasText: 'Read a book' });
 await read.click();
@@ -193,6 +318,177 @@ if (sw) {
   });
   check('a push names the habit still to do', shown.length === 1 && shown[0].includes('Meditate') && shown[0].includes('Not done yet'), shown.join(' / '));
 } else check('service worker available for the reminder check', false);
+
+// ---------- cloud backup ----------
+const sheetClosed = p => p.waitForSelector('.scrim', { state: 'detached' });
+const cardNames = p => p.$$eval('#view-today .card .name', els => els.map(e => e.textContent));
+const backUpNow = async p => {
+  await p.click('[data-tab="settings"]');
+  await p.click('[data-act="bk-sync"]');
+  await p.waitForSelector('#toast:has-text("Backed up")');
+};
+if (hasApi) {
+  await page.click('[data-tab="settings"]');
+  check('cloud backup starts off', (await page.textContent('.state')) === 'Off');
+  await page.click('[data-act="bk-on"]');
+  await page.click('[data-next="2"]');
+  const code1 = (await page.textContent('#code')).replace(/\s/g, '');
+  check('recovery code is 28 characters', code1.length === 28, code1.length);
+  check('QR code of the recovery code is drawn', await page.waitForSelector('#qr-code img[src^="data:image/png"], #qr-code canvas', { state: 'attached', timeout: 3000 }).then(() => true, () => false));
+  await page.screenshot({ path: SP + '/app-backup-code.png' });
+  await page.click('[data-next="3"]');
+  await page.fill('#last4', 'XXXX');
+  await page.click('[data-go]');
+  check('wrong last 4 is caught', (await page.textContent('#bk-err')).includes("doesn't match"));
+  await page.fill('#last4', code1.slice(-4).toLowerCase());
+  await page.click('[data-go]');
+  await page.waitForSelector('#bk-err:has-text("invite")', { timeout: 5000 }).catch(() => {});
+  check('without an invite, the server refuses', (await page.textContent('#bk-err')).includes('invite'), await page.textContent('#bk-err'));
+  await page.click('.sheet [data-close]');
+  await sheetClosed(page);
+
+  // Open an invite link, then turn backup on for real.
+  const invite = execFileSync('node', ['tools/invite.mjs', URL]).toString().split('\n')[0];
+  await page.goto(invite);
+  await page.waitForSelector('#toast:has-text("Invite saved")');
+  check('invite link is taken and removed from the address', !page.url().includes('invite='));
+  await page.click('[data-tab="settings"]');
+  await page.click('[data-act="bk-on"]');
+  await page.click('[data-next="2"]');
+  const code = (await page.textContent('#code')).replace(/\s/g, '');
+  await page.click('[data-next="3"]');
+  await page.fill('#last4', code.slice(-4));
+  await page.click('[data-go]');
+  await sheetClosed(page);
+  await page.waitForSelector('.state.on');
+  check('backup turns on', await page.isVisible('.state.on'));
+  check('upload reported', (await page.textContent('#toast')).includes('encrypted and uploaded'), await page.textContent('#toast'));
+  await page.screenshot({ path: SP + '/app-backup-on.png', fullPage: true });
+  await page.click('[data-tab="today"]');
+  const namesA = await cardNames(page);
+
+  // ---------- device B: a fresh install (its own two default habits) opens the backup ----------
+  const B = await device('B');
+  const pb = B.page;
+  await pb.goto(URL);
+  await pb.waitForSelector('.card');
+  await pb.locator('.card', { hasText: 'Walk' }).click();   // B ticked something before linking
+  await pb.click('[data-tab="settings"]');
+  await pb.click('[data-act="bk-link"]');
+  await pb.fill('#linkcode', 'AAAA BBBB');
+  await pb.click('[data-link]');
+  await pb.waitForSelector('#bk-err:not([hidden])');
+  check('a mistyped code is caught before sending', (await pb.textContent('#bk-err')).includes('28'));
+  await pb.screenshot({ path: SP + '/app-backup-link.png' });
+  await pb.fill('#linkcode', code.match(/.{4}/g).join(' ').toLowerCase());
+  await pb.click('[data-link]');
+  await sheetClosed(pb);
+  check('device B opens the backup', await pb.isVisible('.state.on'));
+  await pb.click('[data-tab="today"]');
+  await pb.waitForSelector('.card');
+  const namesB = await cardNames(pb);
+  check('device B sees the habits, in the same order, with no duplicate defaults', namesB.join('|') === namesA.join('|') && namesB.filter(n => n === 'Read a book').length === 1, namesB.join(', '));
+  check('device B sees the ticks', await pb.locator('.card', { hasText: 'Read a book' }).evaluate(e => e.classList.contains('done'))
+    && (await pb.locator('.card', { hasText: 'Pages' }).locator('.meta').textContent()).startsWith('22 / 20 pages'));
+  check('device B sees the picked kind', (await pb.locator('.card', { hasText: 'Walk' }).locator('.kind[aria-pressed="true"]').textContent()) === 'Jog');
+  check('device B sees the weekly count', (await pb.locator('.card', { hasText: 'Gym' }).locator('.meta').textContent()).startsWith('1 of 2 this week'));
+
+  // B unticks one habit; and its service worker ticks another from a notification.
+  await pb.locator('.card', { hasText: 'Gym' }).click();
+  const meditate = await pb.locator('.card', { hasText: 'Meditate' }).getAttribute('data-id');
+  const swB = await serviceWorker(B.ctx);
+  if (swB) await swB.evaluate(([id, date]) => markDone(id, date), [meditate, dayKey()]);
+  else check('service worker available on device B', false);
+  await pb.waitForTimeout(500);
+  const dirtyB = (await dumpDB(pb)).dirty.map(d => d.id);
+  check('a tick from a notification is marked for upload', dirtyB.includes(`c:${meditate}:${dayKey()}`), dirtyB.join(', '));
+  await backUpNow(pb);
+  await backUpNow(page);
+  await page.click('[data-tab="today"]');
+  check('device A receives the untick', (await page.locator('.card', { hasText: 'Gym' }).locator('.meta').textContent()).startsWith('0 of 2 this week'));
+  check('device A receives the tick made from a notification', await page.locator('.card', { hasText: 'Meditate' }).evaluate(e => e.classList.contains('done')));
+
+  // A deletes a habit; B loses it and its ticks.
+  await page.click('[data-tab="settings"]');
+  await page.locator('.habit-row', { hasText: 'Pages' }).locator('[data-edit]').click();
+  await page.click('[data-delete]');
+  await page.click('[data-delete]');
+  await sheetClosed(page);
+  await backUpNow(page);
+  await backUpNow(pb);
+  await pb.click('[data-tab="today"]');
+  check('a habit deleted on device A is gone on device B', !(await cardNames(pb)).includes('Pages'), (await cardNames(pb)).join(', '));
+  const dbB = await dumpDB(pb);
+  check('its ticks are tombstones on device B', dbB.checks.filter(c => c.habitId === dbB.habits.find(h => h.deleted && !h.mergedInto)?.id).every(c => c.deleted)
+    && dbB.habits.filter(h => h.mergedInto).length === 2 && dbB.dirty.length === 0, `${dbB.dirty.length} dirty`);
+
+  // The server holds only ciphertext.
+  if (process.env.WRANGLER) {
+    const [cmd, ...args] = process.env.WRANGLER.split(' ');
+    const dump = execFileSync(cmd, [...args, 'd1', 'execute', 'tick', '--local', ...(process.env.PERSIST_TO ? ['--persist-to', process.env.PERSIST_TO] : []), '--json', '--command', 'SELECT * FROM records; SELECT * FROM vaults'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+    // Short words are searched for as plaintext JSON would hold them ("Gym"): three random
+    // letters turn up inside base64 ciphertext now and then.
+    const leaks = ['Walk / Jog / Run', '"Jog"', 'Read a book', 'Meditate', '"Gym"', '"Pages"', '"pages"', '2026-', '"name"', meditate, code].filter(x => dump.includes(x));
+    const cts = [...dump.matchAll(/"ct":\s*"([^"]*)"/g)].map(m => m[1]);
+    const sealed = cts.length > 0 && cts.every(ct => /^[\w-]+$/.test(ct) && (Buffer.from(ct, 'base64url').length - 16) % 256 === 0);
+    check('server stores no readable habits or ticks', !leaks.length && sealed, leaks.join(', ') || `${cts.length} records`);
+  } else skip('server stores no readable habits or ticks (set WRANGLER and PERSIST_TO to read the local database)');
+
+  // Turning backup off on B leaves its data and the cloud copy alone.
+  await pb.click('[data-tab="settings"]');
+  await pb.click('[data-act="bk-off"]');
+  await pb.waitForTimeout(400);
+  await pb.screenshot({ path: SP + '/app-backup-off.png' });
+  await pb.click('[data-off="keep"]');
+  await sheetClosed(pb);
+  check('backup turns off on one device', (await pb.textContent('.state')) === 'Off' && (await pb.$$('.habit-row')).length === 4);
+  await backUpNow(page);
+  check('the other device keeps backing up', await page.isVisible('.state.on'));
+  await B.ctx.close();
+
+  // Erase clears this device and unlinks it; the cloud copy stays. Undo puts both back.
+  await page.click('[data-act="erase"]');
+  await page.click('[data-act="erase"]');
+  await page.waitForTimeout(200);
+  check('erase turns backup off on this device', (await page.textContent('.state')) === 'Off' && (await page.$$('.habit-row')).length === 0);
+  await page.click('#toast button');
+  await page.waitForSelector('.state.on');
+  check('undoing an erase restores the habits and the backup link', (await page.$$('.habit-row')).length === 4);
+  await backUpNow(page);
+  const afterUndo = await dumpDB(page);
+  check('nothing is left to upload after the undo', afterUndo.dirty.length === 0 && afterUndo.local.some(r => r.key === 'vault'), `${afterUndo.dirty.length} dirty`);
+
+  // ---------- the admin page ----------
+  await page.goto(URL + '#admin');
+  await page.waitForSelector('#adm-form');
+  await page.fill('#adm-key', 'not the key');
+  await page.click('#adm-form button');
+  await page.waitForSelector('#adm-form .err');
+  check('the admin page refuses a wrong key', (await page.textContent('#adm-form .err')).includes("isn't this server's admin key"));
+  const adminLink = execFileSync('node', ['tools/admin-link.mjs', URL]).toString().split('\n')[0];
+  await page.goto(adminLink);
+  await page.waitForSelector('.stat3');
+  check('the admin link unlocks the page and leaves the address', !page.url().includes('admin=') && page.url().endsWith('#admin'), page.url());
+  const backups = Number(await page.textContent('.stat3 > div:first-child b'));
+  check('the admin page counts the backups on the server', backups >= 1 && (await page.$$('.tbl tr')).length >= 2, String(backups));
+  await page.click('[data-days="7"]');
+  await page.click('#adm-invite');
+  const made = await page.textContent('#adm-link');
+  check('the admin page makes an invite link', made.startsWith(URL + '?invite=') && made.length > URL.length + 40);
+  check('a made invite is one the server accepts', await fetch(URL + 'api/vault', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ vaultId: randomBytes(16).toString('base64url'), authHash: randomBytes(32).toString('hex'), invite: made.split('?invite=')[1] }) }).then(r => r.status === 201));
+  await page.screenshot({ path: SP + '/app-admin.png', fullPage: true });
+  await page.click('[data-tab="settings"]');
+  check('Settings shows the Admin row once unlocked', await page.isVisible('a[href="#admin"]'));
+  await page.click('a[href="#admin"]');
+  await page.waitForSelector('#adm-lock');
+  await page.click('#adm-lock');
+  await page.waitForSelector('#adm-form');
+  await page.click('[data-tab="settings"]');
+  check('locking hides the Admin row', !(await page.isVisible('a[href="#admin"]')));
+} else {
+  ['backup needs an invite', 'backup turns on', 'device B opens the backup and sees the habits and ticks', 'unticks, notification ticks and habit deletes reach the other device', 'server stores no readable habits or ticks']
+    .forEach(n => skip(`${n} (no backup API at ${URL}; run npm run dev)`));
+}
 
 // offline
 await page.waitForFunction(() => navigator.serviceWorker?.controller || null, null, { timeout: 5000 }).catch(() => {});

@@ -1,7 +1,7 @@
-import { todayKey, parse, addDays, key, DAY_LONG, DAY_SHORT, MONTHS } from '../dates.js';
+import { todayKey, parse, addDays, key, greeting, DAY_LONG, DAY_SHORT, MONTHS } from '../dates.js';
 import { isDue, dayProgress } from '../stats.js';
 import { store, has, active, byId, saveSettings, tickCount, reorder } from '../store.js';
-import { view, $, ws, cardHTML, metaText, ringSVG, toggle, storageError, daysSince } from '../ui.js';
+import { view, $, esc, ws, cardHTML, metaText, ringSVG, toggle, storageError, daysSince, appVersion } from '../ui.js';
 import { openEditor, openAmountSheet, pickKind } from '../sheets.js';
 import { exportBackup } from '../backup.js';
 import { bindDrag } from '../drag.js';
@@ -37,12 +37,20 @@ function bannerHTML() {
   }
   const since = daysSince(s.lastBackupOn || s.firstUsedOn);
   const snoozed = s.backupSnoozedUntil && s.backupSnoozedUntil > todayKey();
-  if (since >= 30 && !snoozed && tickCount()) {
+  if (since >= 30 && !snoozed && !store.vault && tickCount()) {
     return `<div class="notice"><span>${s.lastBackupOn ? `Your last backup was ${since} days ago.` : "You haven't backed up yet."} Your history lives only on this device.</span>
       <span class="notice-actions"><button type="button" data-act="snooze-backup" class="quiet">Later</button><button type="button" data-act="backup">Back up</button></span></div>`;
   }
   return '';
 }
+
+// Asked once, on Today. The name only greets you; it stays on this device.
+const welcomeHTML = () => `<form class="welcome" id="name-form" autocomplete="off">
+    <label class="rtitle" for="name-in">What should we call you?</label>
+    <div class="inline"><input class="text-in" id="name-in" maxlength="40" autocomplete="given-name" placeholder="Your first name" required>
+      <button class="btn-sm strong" type="submit">Continue</button></div>
+    <p class="fnote">Tick uses it to say hello. It stays on this device. <button type="button" class="linkbtn" data-act="skip-name">Not now</button></p>
+  </form>`;
 
 export function renderToday() {
   const tKey = todayKey();
@@ -52,7 +60,9 @@ export function renderToday() {
   const list = active().filter(h => k >= h.createdOn);
   const due = list.filter(h => isDue(h, d, has, tKey, ws()));
   const rest = list.filter(h => !due.includes(h));
+  const name = store.settings.name;
   el().innerHTML = `
+    ${isToday && name ? `<p class="hello">${greeting()}, ${esc(name)}</p>` : ''}
     <header class="head">
       <div>
         <div class="eyebrow">${isToday ? DAY_LONG[d.getDay()] : 'Editing ' + DAY_LONG[d.getDay()]}</div>
@@ -62,13 +72,15 @@ export function renderToday() {
       <div class="pring" id="pring" role="img" aria-label="${p.done} of ${p.total} done">${ringSVG(58, 5, p.total ? p.done / p.total : 0)}<span>${p.done}/${p.total}</span></div>
     </header>
     <div class="strip" id="strip">${stripHTML()}</div>
+    ${isToday && !name && !store.settings.nameAsked ? welcomeHTML() : ''}
     ${isToday ? bannerHTML() : `<div class="notice"><span>You're editing a past day.</span><button type="button" data-act="today">Back to today</button></div>`}
     ${active().length ? '' : `<div class="empty"><h2>No habits yet</h2><p>Add the first thing you want to keep doing.</p></div>`}
     ${active().length && !list.length ? `<div class="empty"><p>None of your habits had started by this day.</p></div>` : ''}
     ${due.length ? `<div class="list">${due.map(h => cardHTML(h, k)).join('')}</div>` : ''}
     ${rest.length ? `<div class="sec">Not due ${isToday ? 'today' : 'that day'}</div><div class="list">${rest.map(h => cardHTML(h, k, true)).join('')}</div>` : ''}
     <button class="add" type="button" data-act="new"><span aria-hidden="true">+</span> New habit</button>
-    ${active().length ? '<p class="hint">Tap a habit to tick it. Press and hold to edit it, or hold and drag to move it.</p>' : ''}`;
+    ${active().length ? '<p class="hint">Tap a habit to tick it. Press and hold to edit it, or hold and drag to move it.</p>' : ''}
+    ${appVersion.text ? `<p class="version" id="version">Tick ${esc(appVersion.text)}</p>` : ''}`;
 }
 
 function refreshHeader() {
@@ -95,6 +107,12 @@ export function bindToday() {
       reorder(all.map(id => slots.has(id) ? next.shift() : id)).then(renderToday, storageError);
     },
   });
+  root.addEventListener('submit', e => {
+    if (e.target.id !== 'name-form') return;
+    e.preventDefault();
+    const name = $('#name-in').value.trim().slice(0, 40);
+    if (name) saveSettings({ name, nameAsked: true }).then(renderToday, storageError);
+  });
   root.addEventListener('keydown', e => {
     const card = e.target.closest('.card');
     if (card && e.target === card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); card.click(); }
@@ -108,6 +126,7 @@ export function bindToday() {
     const act = t.closest('[data-act]')?.dataset.act;
     if (act === 'today') { view.selDate = todayKey(); return renderToday(); }
     if (act === 'new') return openEditor(null);
+    if (act === 'skip-name') return saveSettings({ nameAsked: true }).then(renderToday, storageError);
     if (act === 'dismiss-install') return saveSettings({ installTipDismissed: true }).then(renderToday, storageError);
     if (act === 'snooze-backup') return saveSettings({ backupSnoozedUntil: key(addDays(parse(todayKey()), 7)) }).then(renderToday, storageError);
     if (act === 'backup') return exportBackup().then(renderToday);

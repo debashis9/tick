@@ -1,4 +1,4 @@
 node_modules/
 .wrangler/
-# Local Worker secrets (the VAPID private key). The deployed Worker has it as a secret.
+# Local Worker secrets (the VAPID private key, the invite secret). The deployed Worker has them as secrets.
 .dev.vars

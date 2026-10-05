@@ -1,9 +1,11 @@
 import { store, active, archived, byId, saveSettings, setArchived, deleteHabit, moveHabit, eraseAll, tickCount } from '../store.js';
-import { view, $, esc, cap, ICON, render, toast, storageError, daysSince, scheduleText } from '../ui.js';
+import { view, $, esc, cap, ICON, render, toast, storageError, daysSince, scheduleText, appVersion } from '../ui.js';
 import { openEditor } from '../sheets.js';
 import { exportBackup, importBackup } from '../backup.js';
 import { applyTheme } from '../theme.js';
 import { pushProblem, permission, sendTest } from '../push.js';
+import { syncNow, explain } from '../sync.js';
+import { openTurnOn, openLink, openShowCode, openTurnOff } from '../backup-ui.js';
 
 const el = () => $('#view-settings');
 let confirmErase = false;
@@ -23,6 +25,33 @@ function backupText() {
   if (!s.lastBackupOn) return 'Saves one file with all your habits and ticks. You haven\'t made a backup yet.';
   const n = daysSince(s.lastBackupOn);
   return `Saves one file with all your habits and ticks. Last backup ${n === 0 ? 'today' : n === 1 ? 'yesterday' : `${n} days ago`}.`;
+}
+
+function ago(ms) {
+  const mins = Math.round((Date.now() - ms) / 60e3);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} ${mins === 1 ? 'minute' : 'minutes'} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+  return `on ${new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+}
+
+function cloudHTML() {
+  const v = store.vault;
+  const [cls, label] = !v ? ['', 'Off'] : v.lastError ? ['warn', 'Needs attention'] : ['on', 'On'];
+  const text = !v ? 'Keeps an encrypted copy of your habits and ticks, and keeps your devices in step. It is locked on this device before it is uploaded, so only your devices can read it.'
+    : v.lastError ? v.lastError
+    : v.lastSyncAt ? `Backed up ${ago(v.lastSyncAt)}. Encrypted on this device before it is uploaded.`
+    : 'Backing up…';
+  return `<div class="glabel">Cloud backup</div>
+    <div class="group">
+      <div class="row"><div class="rt"><div class="rtitle">End-to-end encrypted backup</div><div class="rs">${esc(text)}</div></div>
+        <span class="state ${cls}">${label}</span></div>
+      ${!v && store.settings.invite ? '<div class="row"><div class="rt"><div class="rs">You have an invite for cloud backup on this device.</div></div></div>' : ''}
+      <div class="row wrap actions">${v
+        ? '<button class="btn-sm" type="button" data-act="bk-sync">Back up now</button><button class="btn-sm" type="button" data-act="bk-code">Show recovery code</button><button class="btn-sm quiet" type="button" data-act="bk-off">Turn off…</button>'
+        : '<button class="btn-sm strong" type="button" data-act="bk-on">Turn on backup</button><button class="btn-sm quiet" type="button" data-act="bk-link">I have a recovery code</button>'}</div>
+    </div>`;
 }
 
 function remindersHTML(list) {
@@ -76,18 +105,22 @@ export function renderSettings() {
         ${navigator.share ? '<button class="btn-sm" type="button" data-act="share">Share</button>' : ''}
         <button class="btn-sm" type="button" data-act="copy">Copy link</button></div></div></div></div>
 
+    ${cloudHTML()}
+
     <div class="glabel">Your data</div>
     <div class="group">
-      <div class="row"><div class="rt"><div class="rtitle">Back up</div><div class="rs">${backupText()}</div></div>
+      <div class="row"><div class="rt"><div class="rtitle">Back up to a file</div><div class="rs">${backupText()}</div></div>
         <button class="btn-sm" type="button" data-act="backup">Back up</button></div>
       <div class="row"><div class="rt"><div class="rtitle">Restore from a backup</div><div class="rs">Adds habits and ticks from a backup file. Nothing you have is overwritten.</div></div>
         <label class="btn-sm" for="restore-file">Choose file</label>
         <input type="file" id="restore-file" accept="application/json,.json" hidden></div>
-      <div class="row"><div class="rt"><div class="rs">Stored on this device only · ${list.length} ${list.length === 1 ? 'habit' : 'habits'} · ${ticks} ${ticks === 1 ? 'tick' : 'ticks'}</div></div></div>
+      <div class="row"><div class="rt"><div class="rs">Stored on this device${store.vault ? ' and encrypted in your cloud backup' : ' only'} · ${list.length} ${list.length === 1 ? 'habit' : 'habits'} · ${ticks} ${ticks === 1 ? 'tick' : 'ticks'}</div></div></div>
     </div>
 
     <div class="glabel">Preferences</div>
     <div class="group">
+      <form class="row wrap" id="name-set" autocomplete="off"><div class="rt"><label class="rtitle" for="set-name">Your name</label><div class="rs">Tick uses it to say hello. It stays on this device.</div></div>
+        <div class="inline"><input class="text-in sm" id="set-name" maxlength="40" autocomplete="given-name" placeholder="Your first name" value="${esc(s.name)}"><button class="btn-sm" type="submit">Save</button></div></form>
       <div class="row wrap"><div class="rt"><div class="rtitle">Theme</div></div>
         <div class="seg">${['system', 'light', 'dark'].map(t => `<button type="button" data-theme-set="${t}" aria-pressed="${s.theme === t}">${cap(t)}</button>`).join('')}</div></div>
       <div class="row wrap"><div class="rt"><div class="rtitle">Week starts on</div></div>
@@ -105,10 +138,16 @@ export function renderSettings() {
 
     <div class="glabel">Privacy</div>
     <div class="group">
-      <div class="row"><div class="rt"><div class="rs">Everything you track stays on this device. Tick has no accounts, no analytics and no server that receives your habits or ticks. Reminders are the only thing that uses a server (see Reminders above).</div></div></div>
-      <div class="row"><div class="rt"><div class="rtitle">Erase all data</div><div class="rs">Removes every habit and tick from this device.</div></div>
+      <div class="row"><div class="rt"><div class="rs">Only your devices can read what you track. Tick has no accounts and no analytics, and no server ever receives your habits or ticks in a form it can read. Two things use a server: reminders (see Reminders above) and cloud backup, if you turn it on.</div></div></div>
+      <div class="row"><div class="rt"><div class="rs">With cloud backup on, each habit and tick is encrypted on this device with a key made from your recovery code before it is uploaded. The server stores only encrypted data. It can see that a backup exists, how many records it has, and when your devices sync. It can't see your habits' names, which days you ticked, or amounts and kinds.</div></div></div>
+      <div class="row"><div class="rt"><div class="rtitle">Erase all data</div><div class="rs">Removes every habit and tick from this device.${store.vault ? ' Cloud backup is turned off here; the cloud copy is kept, and you can open it again with your recovery code.' : ''}</div></div>
         <button class="btn-sm danger" type="button" data-act="erase">${confirmErase ? 'Tap again to erase' : 'Erase'}</button></div>
-    </div>`;
+    </div>
+
+    ${s.adminKey ? `<div class="glabel">Admin</div>
+    <div class="group"><div class="row"><div class="rt"><div class="rtitle">Admin page</div><div class="rs">Invite links for cloud backup, and what the server holds.</div></div>
+      <a class="btn-sm" href="#admin">Open</a></div></div>` : ''}
+    ${appVersion.text ? `<p class="foot" id="set-version">This is Tick ${esc(appVersion.text)}.</p>` : ''}`;
   if (window.QRCode) {
     try {
       new window.QRCode($('#qr'), { text: appURL(), width: 96, height: 96, colorDark: '#161A17', colorLight: '#FFFFFF', correctLevel: window.QRCode.CorrectLevel.M });
@@ -118,6 +157,16 @@ export function renderSettings() {
 
 export function bindSettings() {
   const root = el();
+  root.addEventListener('submit', async e => {
+    if (e.target.id !== 'name-set') return;
+    e.preventDefault();
+    try {
+      const name = $('#set-name').value.trim().slice(0, 40);
+      await saveSettings({ name, nameAsked: true });
+      toast(name ? `Saved. Hello, ${name}.` : 'Name removed.');
+      renderSettings();
+    } catch (err) { storageError(err); }
+  });
   root.addEventListener('change', e => {
     if (e.target.id !== 'restore-file') return;
     const file = e.target.files?.[0];
@@ -151,6 +200,16 @@ export function bindSettings() {
         try { await sendTest(); toast('Test sent. It should arrive in a few seconds.'); }
         catch (e) { console.warn(e); toast(navigator.onLine ? "Couldn't send a test. Try again later." : 'Connect to the internet to send a test.'); }
         return;
+      }
+      if (act === 'bk-on') return openTurnOn();
+      if (act === 'bk-link') return openLink();
+      if (act === 'bk-code') return openShowCode();
+      if (act === 'bk-off') return openTurnOff();
+      if (act === 'bk-sync') {
+        const b = t.closest('[data-act]');
+        b.disabled = true; b.textContent = 'Backing up…';
+        try { await syncNow(); toast('Backed up.'); } catch (e) { toast(explain(e), null, '', 6000); }
+        return renderSettings();
       }
       if (act === 'backup') { await exportBackup(); return renderSettings(); }
       if (act === 'share') {

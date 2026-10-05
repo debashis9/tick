@@ -3,9 +3,11 @@
 //
 // What it stores, per device that turned on reminders: the push address, reminder times with
 // their weekdays, the time zone, and when each time was last sent. Nothing about habits or ticks.
+// Encrypted cloud backup (/api/vault, /api/sync) is separate: see vault.js. The two share nothing.
 
 import { DurableObject } from 'cloudflare:workers';
 import { validEndpoint, validTimeZone, cleanSlots, localTime, dueSlots, vapidAuth, sendPush } from './webpush.js';
+import { api as vault } from './vault.js';
 
 const MAX_DEVICES = 5000;
 const MAX_PER_RUN = 45;
@@ -109,6 +111,7 @@ async function api(request, env, url) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === '/api/vault' || url.pathname === '/api/sync' || url.pathname.startsWith('/api/admin/')) return vault(request, env);
     if (url.pathname.startsWith('/api/')) return api(request, env, url);
     return env.ASSETS.fetch(request);
   },

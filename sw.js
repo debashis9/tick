@@ -1,22 +1,30 @@
 // Cache-first app shell. Bump VERSION on every deploy: the browser only installs a new
 // service worker when this file's bytes change, and the app then offers "Refresh".
-const VERSION = 'tick-v4';
+const VERSION = 'tick-v5';
 
 const SHELL = [
   './',
   './styles.css',
   './manifest.webmanifest',
+  './js/admin.js',
   './js/app.js',
+  './js/backup-ui.js',
   './js/backup.js',
+  './js/boot-theme.js',
+  './js/crypto.js',
   './js/dates.js',
   './js/db.js',
   './js/drag.js',
   './js/push.js',
+  './js/records.js',
   './js/sheets.js',
   './js/stats.js',
   './js/store.js',
+  './js/sync-core.js',
+  './js/sync.js',
   './js/theme.js',
   './js/ui.js',
+  './js/views/admin.js',
   './js/views/calendar.js',
   './js/views/settings.js',
   './js/views/today.js',
@@ -47,19 +55,22 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('message', event => {
   if (event.data === 'skipWaiting') self.skipWaiting();
+  // The app shows which version it is running (the one this worker cached).
+  if (event.data === 'version') event.source?.postMessage({ version: VERSION });
 });
 
 self.addEventListener('fetch', event => {
-  const req = event.request;
-  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  const req = event.request, url = new URL(req.url);
+  // The API (reminders, cloud backup) always goes to the network, and never into the cache.
+  if (req.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
   if (req.mode === 'navigate') {
-    // Any page load (including ?query or #hash variants) gets the cached shell. It's cached
+    // Any page load (including ?invite=… or #hash variants) gets the cached shell. It's cached
     // as './', not './index.html': some hosts (Cloudflare) redirect /index.html to /, and a
     // redirected response can't answer a navigation.
     event.respondWith(caches.match('./').then(r => r ? unredirect(r) : fetch(req)));
     return;
   }
-  if (new URL(req.url).pathname.endsWith('/manifest.webmanifest')) {
+  if (url.pathname.endsWith('/manifest.webmanifest')) {
     // Network first, so install details (name, id, icons) are never stale; cache when offline.
     event.respondWith(fetch(req).then(res => {
       const copy = res.clone();
@@ -80,7 +91,10 @@ const pad = n => String(n).padStart(2, '0');
 const dateKey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const req = r => new Promise((resolve, reject) => { r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
 
-// Opens the app's database without ever creating it (the page owns the schema).
+// Opens the app's database without ever creating or upgrading it (the page owns the schema).
+// An update can reach this worker before the page has upgraded the database to version 2
+// (js/db.js), so the code below works with both: version 1 has no `local` or `dirty` store,
+// and keeps the week start and the test marker in the settings store.
 function openDB() {
   return new Promise((resolve, reject) => {
     const r = indexedDB.open('tick');
@@ -89,20 +103,24 @@ function openDB() {
     r.onerror = () => reject(r.error);
   });
 }
+const isV2 = db => db.objectStoreNames.contains('local');
 
 const isDone = (h, c) => !!c && (!h.goal || c.amount == null || c.amount >= h.goal.amount);
 
 async function whatsDue(now) {
   const db = await openDB();
   try {
-    const t = db.transaction(['habits', 'checks', 'settings'], 'readwrite');
-    const [habits, checks, settings, test] = await Promise.all([
+    const v2 = isV2(db), marker = v2 ? 'local' : 'settings';
+    const t = db.transaction(v2 ? ['habits', 'checks', 'settings', 'local'] : ['habits', 'checks', 'settings'], 'readwrite');
+    const [allHabits, allChecks, settings, test] = await Promise.all([
       req(t.objectStore('habits').getAll()),
       req(t.objectStore('checks').getAll()),
-      req(t.objectStore('settings').get('app')),
-      req(t.objectStore('settings').get('pushTest')),
+      req(t.objectStore('settings').get(v2 ? 'prefs' : 'app')),
+      req(t.objectStore(marker).get('pushTest')),
     ]);
-    if (test) t.objectStore('settings').delete('pushTest');
+    if (test) t.objectStore(marker).delete('pushTest');
+    // A deleted habit or an unticked day stays in the database as a tombstone (for cloud backup).
+    const habits = allHabits.filter(h => !h.deleted), checks = allChecks.filter(c => !c.deleted);
     const today = dateKey(now), mins = now.getHours() * 60 + now.getMinutes() + 2;
     const ws = settings?.weekStart ?? 1;
     const w0 = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (now.getDay() - ws + 7) % 7);
@@ -118,7 +136,8 @@ async function whatsDue(now) {
       .sort((a, b) => a.order - b.order)
       .map(h => ({ h, entry: byKey.get(h.id + '|' + today), count: h.schedule.type === 'weekly' ? weekCount(h) : 0 }));
     await new Promise(resolve => { t.oncomplete = t.onerror = t.onabort = resolve; });
-    return { due, today, test: test && now - test.at < 10 * 60e3 };
+    const testAt = test?.value?.at ?? test?.at;
+    return { due, today, test: !!testAt && now - testAt < 10 * 60e3 };
   } finally {
     db.close();
   }
@@ -154,13 +173,20 @@ async function remind() {
 self.addEventListener('push', event => event.waitUntil(remind()));
 
 // "Mark done" ticks the habit without opening the app; open copies of the app re-read storage.
+// Like every write in js/store.js, it stamps updatedAt and marks the check for upload, or the
+// tick would never reach this person's other devices. The app uploads it the next time it runs.
+// The id is records.js's checkId(habitId, date), which this classic script can't import.
 async function markDone(habitId, date) {
   const db = await openDB();
   try {
-    const t = db.transaction(['checks'], 'readwrite');
+    const v2 = isV2(db);
+    const t = db.transaction(v2 ? ['checks', 'dirty'] : ['checks'], 'readwrite');
     const store = t.objectStore('checks');
     const old = await req(store.get([habitId, date]));
-    store.put({ ...old, habitId, date, at: Date.now() });
+    const now = Date.now(), updatedAt = Math.max(now, (old?.updatedAt || 0) + 1);
+    // An unticked day is a tombstone: replace it; keep the kind or amount of a live one.
+    store.put({ ...(old?.deleted ? null : old), habitId, date, at: now, updatedAt });
+    if (v2) t.objectStore('dirty').put({ id: `c:${habitId}:${date}`, updatedAt });
     await new Promise((resolve, reject) => { t.oncomplete = resolve; t.onerror = t.onabort = () => reject(t.error); });
   } finally {
     db.close();

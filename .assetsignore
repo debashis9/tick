@@ -1,9 +1,10 @@
 # Everything in this folder is published except what's listed here.
-# The app itself is: index.html, styles.css, sw.js, manifest.webmanifest, js/, fonts/, icons/
+# The app itself is: index.html, styles.css, sw.js, manifest.webmanifest, _headers, js/, fonts/, icons/
 .git
 .wrangler
 node_modules
 tests
+tools
 mockup
 package.json
 package-lock.json

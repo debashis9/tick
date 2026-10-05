@@ -1,17 +1,21 @@
 import { todayKey, parse } from './dates.js';
-import { init, store, onExternalChange } from './store.js';
-import { view, $, setRenderer, toast, monthOf } from './ui.js';
+import { init, store, onExternalChange, saveSettings } from './store.js';
+import { view, $, setRenderer, toast, monthOf, appVersion } from './ui.js';
 import { renderToday, bindToday } from './views/today.js';
 import { renderCalendar, bindCalendar } from './views/calendar.js';
 import { renderSettings, bindSettings, resetSettingsConfirm } from './views/settings.js';
+import { renderAdmin, bindAdmin, unlockAdmin } from './views/admin.js';
 import { applyTheme } from './theme.js';
 import { startReminderSync } from './push.js';
+import { startBackgroundSync, onSyncStatus } from './sync.js';
 
-const TABS = ['today', 'calendar', 'settings'];
+// 'admin' has no button in the nav: it's reached from Settings (once unlocked) or at #admin.
+const TABS = ['today', 'calendar', 'settings', 'admin'];
 
 function render() {
   if (view.tab === 'today') renderToday();
   else if (view.tab === 'calendar') renderCalendar();
+  else if (view.tab === 'admin') renderAdmin();
   else renderSettings();
 }
 
@@ -25,7 +29,27 @@ function go(tab) {
   resetSettingsConfirm();
   render();
   window.scrollTo(0, 0);
-  history.replaceState(null, '', tab === 'today' ? location.pathname : '#' + tab);
+  history.replaceState(null, '', location.pathname + (tab === 'today' ? '' : '#' + tab));
+}
+
+// Records arrived from the cloud or another tab. Don't redraw the list under a card that is
+// being dragged, or a field someone is typing in: wait until they're done.
+function renderRemote() {
+  const a = document.activeElement;
+  if (document.querySelector('.card.lifted') || (a?.closest?.('main') && a.matches('input:not([type=file])'))) return setTimeout(renderRemote, 400);
+  render();
+}
+
+// The admin's own link (…/#admin=KEY, from tools/admin-link.mjs) unlocks the admin page on this
+// device without typing the key. The key is taken out of the address at once.
+function takeAdminLink() {
+  if (!location.hash.startsWith('#admin=')) return false;
+  const key = decodeURIComponent(location.hash.slice(7));
+  history.replaceState(null, '', location.pathname + '#admin');
+  const unlocking = unlockAdmin(key);
+  go('admin');   // shows "Checking…" until the server answers
+  unlocking.then(ok => { if (view.tab === 'admin') renderAdmin(); if (ok) toast('Admin unlocked on this device. You can now turn on cloud backup too.', null, '', 7000); });
+  return true;
 }
 
 // If the app stays open past midnight, move "today" forward.
@@ -62,6 +86,17 @@ function registerServiceWorker() {
   });
 }
 
+// An invite link (…/?invite=…) is kept on this device until backup is turned on. Read before
+// the first tab switch, which rewrites the address.
+const invite = new URLSearchParams(location.search).get('invite');
+async function takeInvite() {
+  if (!invite) return;
+  if (/^[\w-]+\.[\w-]+$/.test(invite) && invite.length < 400) {
+    await saveSettings({ invite });
+    toast('Invite saved. Turn on cloud backup in Settings whenever you like.', () => document.querySelector('.nav [data-tab="settings"]').click(), 'Settings', 8000);
+  }
+}
+
 async function boot() {
   try {
     await init();
@@ -78,17 +113,28 @@ async function boot() {
   bindToday();
   bindCalendar();
   bindSettings();
-  onExternalChange(render);
+  onExternalChange(renderRemote);
+  onSyncStatus(() => { if (view.tab === 'settings' && !document.querySelector('.scrim')) render(); });
   document.querySelector('.nav').addEventListener('click', e => {
     const b = e.target.closest('[data-tab]');
     if (b) go(b.dataset.tab);
   });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDayRollover(); });
   setInterval(checkDayRollover, 60_000);
+  bindAdmin();
+  // Links inside the app (Settings → Admin → Open, Admin → ‹ Settings) and the admin link.
+  addEventListener('hashchange', () => {
+    if (takeAdminLink()) return;
+    const t = location.hash.slice(1);
+    if (TABS.includes(t) && t !== view.tab) go(t);
+  });
   const start = location.hash.slice(1);
-  go(TABS.includes(start) ? start : 'today');
+  if (!takeAdminLink()) go(TABS.includes(start) ? start : 'today');
   registerServiceWorker();
+  appVersion().then(v => { if (v && (view.tab === 'today' || view.tab === 'settings')) render(); });
   startReminderSync();
+  await takeInvite();
+  startBackgroundSync();
 }
 
 boot();

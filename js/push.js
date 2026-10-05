@@ -3,7 +3,7 @@
 // weekdays, and the time zone. It never learns which habit a reminder is for or whether it
 // was ticked: the service worker (sw.js) reads that from this device when the push arrives.
 
-import { store, active, onLocalChange, saveSettings } from './store.js';
+import { store, active, onLocalChange, onExternalChange, saveSettings } from './store.js';
 import { markPushTest } from './db.js';
 
 // The public half of the Worker's VAPID key pair (the private half is a Worker secret).
@@ -101,6 +101,8 @@ export function syncReminders() {
 
 export function startReminderSync() {
   onLocalChange(syncReminders);
+  // A habit deleted or archived on another device may have had a reminder on this one.
+  onExternalChange(syncReminders);
   addEventListener('online', syncReminders);
   syncReminders();
 }

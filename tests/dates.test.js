@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { key, parse, addDays, weekIdx, startOfWeek, orderedDays, isValidKey, todayKey } from '../js/dates.js';
+import { key, parse, addDays, weekIdx, startOfWeek, orderedDays, isValidKey, todayKey, greeting } from '../js/dates.js';
 
 test('key and parse round-trip local dates', () => {
   assert.equal(key(new Date(2026, 0, 5)), '2026-01-05');
@@ -46,4 +46,11 @@ test('isValidKey rejects malformed and impossible dates', () => {
   assert.ok(!isValidKey('2026-02-30'));
   assert.ok(!isValidKey('2026-2-3'));
   assert.ok(!isValidKey(null));
+});
+
+test('greeting follows the time of day', () => {
+  assert.equal(greeting(5), 'Good morning'); assert.equal(greeting(11), 'Good morning');
+  assert.equal(greeting(12), 'Good afternoon'); assert.equal(greeting(16), 'Good afternoon');
+  assert.equal(greeting(17), 'Good evening'); assert.equal(greeting(21), 'Good evening');
+  assert.equal(greeting(22), 'Hi'); assert.equal(greeting(0), 'Hi'); assert.equal(greeting(4), 'Hi');
 });

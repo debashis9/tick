@@ -2,9 +2,10 @@
   "name": "tick",
   "private": true,
   "type": "module",
-  "description": "Local-only habit tracker PWA. No build step; this file only exists so Node runs the tests as ES modules.",
+  "description": "Tick, a habit tracker PWA. No build step; this file only exists so Node runs the tests as ES modules.",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "serve": "python3 -m http.server 8420"
+    "serve": "python3 -m http.server 8420",
+    "dev": "npx wrangler d1 migrations apply tick --local --persist-to ~/.cache/tick-wrangler && npx wrangler dev --port 8788 --persist-to ~/.cache/tick-wrangler"
   }
 }
