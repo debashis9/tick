@@ -90,8 +90,8 @@ Cloud backup needs three things set up once, **before** the code that uses them 
    Without it, anyone who finds the address can create a backup vault.
 3. Commit `wrangler.jsonc` and push.
 
-**On every deploy, bump `VERSION` in `sw.js`** (`tick-v5` → `tick-v6`). The app shows it at the
-bottom of Today ("Tick v5") and of Settings, so you can tell which version a phone is running.
+**On every deploy, bump `VERSION` in `sw.js`** (`tick-v6` → `tick-v7`). The app shows it at the
+bottom of Today ("Tick v6") and of Settings, so you can tell which version a phone is running.
 Installed apps only
 pick up new files when `sw.js` changes; they then show "A new version of Tick is ready ·
 Refresh". If you add a file, add it to `SHELL` in `sw.js` too.
@@ -99,35 +99,41 @@ Refresh". If you add a file, add it to `SHELL` in `sw.js` too.
 Cloudflare redirects `/index.html` to `/`, so the service worker caches and serves `./`, never
 `./index.html` (a redirected response can't answer a page load).
 
-### The admin page, and inviting people to cloud backup
+### Who gets cloud backup: requests, the Admin tab, invites
 
-Anyone can use Tick on their own device (Settings → Invite shares the plain link). Turning on
-cloud backup needs an invite: `INVITE_SECRET` is how the server tells a backup from someone you
-invited from one by a stranger who found the address.
+Anyone can use Tick on their own device (Settings → Invite shares the plain link). Cloud backup
+is by approval, the same way as in Sol:
 
-The **admin page** is at `/#admin`, for whoever runs this copy of Tick (the same design as
-Pie's). It unlocks with the admin key, which is `INVITE_SECRET` itself, on that device only:
+- **Ask for it:** Settings → Cloud backup → *Ask for cloud backup* sends the person's name and a
+  line about how they know you. Tick checks for an answer each time it opens; once approved, it
+  says so on Today and Settings offers *Turn on backup*. A device without an invite or an
+  approval never sees a Turn on button that would fail at the end.
+- **The Admin tab** appears in the navigation on any device that holds an admin's backup. Being
+  the admin belongs to your backup, not to a key: every device you open your backup on is the
+  admin, with nothing to type. Each sync tells those devices how many people are waiting (a
+  badge on the tab, and a note on Today). The tab approves or rejects requests, lists backups by
+  name with size and last sync and how many synced in the last 7 and 30 days, revokes a backup
+  (its encrypted data is deleted and the device is told why), makes another backup an admin, and
+  makes invite links (signed by the server).
+- **Setting up the first admin, once:** open the admin link on your phone, then tap *Make my
+  backup the admin* on the Admin tab (turn backup on first; the key gives the phone an invite):
+  ```sh
+  node tools/admin-link.mjs https://tick.<subdomain>.workers.dev   # unlocks the Admin tab with the key, without typing it
+  ```
+  Then *Forget the admin key on this device*: your backup keeps you the admin. Don't send that
+  link to anyone: it is the key to the whole server. The key (`INVITE_SECRET`) stays a fallback.
+- **Invite links** skip the request, for people you've already said yes to. Make them on the
+  Admin tab, or from a terminal: `node tools/invite.mjs https://tick.<subdomain>.workers.dev 14`.
+  The Worker only checks a link's signature and expiry and keeps no list of invitees. On an
+  iPhone, where the Home Screen app doesn't share Safari's storage, the link can be pasted into
+  *Ask for cloud backup → I have an invite link*.
+- **What the server keeps for this:** each request's name, note, status and dates; each
+  backup's owner name (from the request, or the name on the device for an invite), how it was
+  allowed, and whether it is an admin's. Never anything from inside a backup.
+- There are no notifications for new requests (Sol has them; in Tick every push means "a
+  reminder is due", and the reminder code is left alone). The badge and Today's note do it.
 
-```sh
-node tools/admin-link.mjs https://tick.<subdomain>.workers.dev   # a link that unlocks it without typing
-```
-
-Open that link on your own phone (or type the key at `/#admin`). Don't send it to anyone: it is
-the key to the whole server. Unlocking also gives that device its own invite (for a year), so it
-can turn on backup straight away, and Settings then shows an Admin row. The page has:
-
-- **Invite links:** pick 7, 14, 30 or 90 days, make a link, send it. Opening it saves the
-  invite on that person's device; they then turn backup on in Settings. The Worker only checks
-  the link's signature and expiry and stores no list of invitees.
-- **Backups on the server:** how many, how many encrypted records, how big, when each was
-  created and last changed (`GET /api/admin/stats`). That is everything the server knows.
-  Habit names, days and ticks can't be shown: the server doesn't have the keys.
-
-The same from a terminal:
-
-```sh
-node tools/invite.mjs https://tick.<subdomain>.workers.dev 14    # an invite link valid for 14 days
-```
+From a terminal, for the record:
 
 ```sh
 npx wrangler d1 execute tick --remote --command "SELECT COUNT(*) AS vaults, SUM(bytes) AS bytes FROM vaults"
@@ -231,9 +237,9 @@ No framework and no build step. `package.json` only exists so Node runs the test
 | `js/views/*.js` | Today, Calendar, Settings |
 | `sw.js` | Offline cache for the app shell (never caches `/api/`); turns an empty push into a reminder; "Mark done" |
 | `worker/index.js`, `worker/webpush.js` | Cloudflare Worker: reminder API, cron, Durable Object, VAPID signing |
-| `worker/vault.js`, `worker/migrations/` | Cloud backup API (`/api/vault`, `/api/sync`, `/api/admin/stats`) and its D1 tables |
-| `js/admin.js`, `js/views/admin.js` | The admin page: checking the key, invite links, what the server holds |
-| `tools/invite.mjs`, `tools/admin-link.mjs` | Invite links for cloud backup; the admin's own unlock link |
+| `worker/vault.js`, `worker/migrations/` | Cloud backup, requests and the Admin tab (`/api/vault`, `/api/sync`, `/api/requests`, `/api/admin/*`) and their D1 tables |
+| `js/admin-api.js`, `js/admin.js`, `js/views/admin.js` | The Admin tab: requests, backups, revoking, admins, invite links (as in Sol) |
+| `tools/invite.mjs`, `tools/admin-link.mjs` | Invite links for cloud backup; the link that unlocks the Admin tab with the key |
 | `_headers` | Content-Security-Policy and other security headers |
 | `mockup/` | The approved design mockup (reference only; not deployed) |
 | `wrangler.jsonc`, `.assetsignore` | Cloudflare deploy config and the list of files not to publish |

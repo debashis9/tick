@@ -35,7 +35,11 @@ export function apiClient(base, keys, fetchFn = (...a) => fetch(...a)) {
     return res.status === 204 ? null : res.json();
   }
   return {
-    create: invite => call('POST', '/api/vault', { vaultId: keys.vaultId, authHash: keys.authHash, invite: invite || undefined }),
+    // opts: an invite token, or { invite, request: 'id.secret', name }
+    create: (opts = {}) => {
+      const o = typeof opts === 'string' ? { invite: opts } : opts;
+      return call('POST', '/api/vault', { vaultId: keys.vaultId, authHash: keys.authHash, invite: o.invite || undefined, request: o.request || undefined, name: o.name || undefined });
+    },
     pull: since => call('GET', `/api/sync?since=${since}`),
     push: records => call('POST', '/api/sync', { records }),
     destroy: () => call('DELETE', '/api/vault'),
@@ -47,10 +51,11 @@ const BATCH = 200;
 // Pull first, so a newer copy from another device wins over an older local edit; then push
 // whatever is still dirty. Last write wins per record, by updatedAt.
 export async function syncOnce(keys, api, local) {
-  let pulled = 0, pushed = 0, unreadable = 0;
+  let pulled = 0, pushed = 0, unreadable = 0, admin;
   let cursor = local.cursor || 0;
   for (;;) {
     const res = await api.pull(cursor);
+    admin = res.admin; // present only for an admin's backup: { pending }
     const incoming = [];
     for (const row of res.records) {
       try { incoming.push(await decryptRecord(keys, row)); } catch { unreadable++; }
@@ -78,5 +83,5 @@ export async function syncOnce(keys, api, local) {
     await local.clearDirty(records.map(r => ({ id: r.id, updatedAt: r.updatedAt })));
     pushed += rows.length;
   }
-  return { pulled, pushed, unreadable };
+  return admin ? { pulled, pushed, unreadable, admin } : { pulled, pushed, unreadable };
 }

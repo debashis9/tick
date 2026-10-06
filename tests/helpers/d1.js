@@ -15,7 +15,8 @@ class Statement {
 
 export function makeD1() {
   const db = new DatabaseSync(':memory:');
-  db.exec(fs.readFileSync(new URL('../../worker/migrations/0001_vaults.sql', import.meta.url), 'utf8'));
+  const dir = new URL('../../worker/migrations/', import.meta.url);
+  for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort()) db.exec(fs.readFileSync(new URL(f, dir), 'utf8'));
   return {
     raw: db,
     prepare: sql => new Statement(db, sql),

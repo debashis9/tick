@@ -1,18 +1,20 @@
 import { todayKey, parse } from './dates.js';
-import { init, store, onExternalChange, saveSettings } from './store.js';
+import { init, store, onExternalChange, onLocalChange, saveSettings } from './store.js';
 import { view, $, setRenderer, toast, monthOf, appVersion } from './ui.js';
 import { renderToday, bindToday } from './views/today.js';
 import { renderCalendar, bindCalendar } from './views/calendar.js';
 import { renderSettings, bindSettings, resetSettingsConfirm } from './views/settings.js';
-import { renderAdmin, bindAdmin, unlockAdmin } from './views/admin.js';
+import { renderAdmin, bindAdmin, unlockAdmin, updateAdminNav, refreshAdmin } from './views/admin.js';
+import { isAdminDevice } from './admin.js';
 import { applyTheme } from './theme.js';
 import { startReminderSync } from './push.js';
-import { startBackgroundSync, onSyncStatus } from './sync.js';
+import { startBackgroundSync, onSyncStatus, checkRequest } from './sync.js';
 
-// 'admin' has no button in the nav: it's reached from Settings (once unlocked) or at #admin.
+// 'admin' has a nav button only on admin devices (views/admin.js: updateAdminNav).
 const TABS = ['today', 'calendar', 'settings', 'admin'];
 
 function render() {
+  updateAdminNav();
   if (view.tab === 'today') renderToday();
   else if (view.tab === 'calendar') renderCalendar();
   else if (view.tab === 'admin') renderAdmin();
@@ -26,6 +28,7 @@ function go(tab) {
     if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   $('#main').classList.toggle('wide', tab === 'calendar');
+  if (tab === 'admin') refreshAdmin();
   resetSettingsConfirm();
   render();
   window.scrollTo(0, 0);
@@ -48,7 +51,7 @@ function takeAdminLink() {
   history.replaceState(null, '', location.pathname + '#admin');
   const unlocking = unlockAdmin(key);
   go('admin');   // shows "Checking…" until the server answers
-  unlocking.then(ok => { if (view.tab === 'admin') renderAdmin(); if (ok) toast('Admin unlocked on this device. You can now turn on cloud backup too.', null, '', 7000); });
+  unlocking.then(ok => { updateAdminNav(); if (view.tab === 'admin') renderAdmin(); if (ok) toast('Admin unlocked on this device. You can now turn on cloud backup too.', null, '', 7000); });
   return true;
 }
 
@@ -97,6 +100,17 @@ async function takeInvite() {
   }
 }
 
+// Asks whether a backup request was answered: on open and whenever Tick comes back to the screen.
+async function askAboutRequest() {
+  const before = store.settings.request?.status;
+  const now = await checkRequest();
+  if (now && now !== before) {
+    if (now === 'approved') toast('Your cloud backup request was approved.', () => go('settings'), 'Turn on', 10000);
+    else if (now === 'rejected') toast("Your cloud backup request wasn't approved.", null, '', 7000);
+    render();
+  }
+}
+
 async function boot() {
   try {
     await init();
@@ -114,12 +128,19 @@ async function boot() {
   bindCalendar();
   bindSettings();
   onExternalChange(renderRemote);
-  onSyncStatus(() => { if (view.tab === 'settings' && !document.querySelector('.scrim')) render(); });
+  // Erase (and its undo) changes whether this device holds the admin's backup.
+  onLocalChange(() => { updateAdminNav(); if (view.tab === 'admin' && !isAdminDevice()) go('today'); });
+  // A sync may have changed whether this device is the admin, or how many people are waiting.
+  onSyncStatus(() => {
+    updateAdminNav();
+    if (view.tab === 'admin' && !isAdminDevice()) go('today');
+    else if ((view.tab === 'settings' || view.tab === 'today') && !document.querySelector('.scrim')) render();
+  });
   document.querySelector('.nav').addEventListener('click', e => {
     const b = e.target.closest('[data-tab]');
     if (b) go(b.dataset.tab);
   });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDayRollover(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkDayRollover(); askAboutRequest(); } });
   setInterval(checkDayRollover, 60_000);
   bindAdmin();
   // Links inside the app (Settings → Admin → Open, Admin → ‹ Settings) and the admin link.
@@ -128,13 +149,15 @@ async function boot() {
     const t = location.hash.slice(1);
     if (TABS.includes(t) && t !== view.tab) go(t);
   });
+  updateAdminNav();
   const start = location.hash.slice(1);
-  if (!takeAdminLink()) go(TABS.includes(start) ? start : 'today');
+  if (!takeAdminLink()) go(TABS.includes(start) ? start : 'today');   // #admin without rights shows how to get them
   registerServiceWorker();
   appVersion().then(v => { if (v && (view.tab === 'today' || view.tab === 'settings')) render(); });
   startReminderSync();
   await takeInvite();
   startBackgroundSync();
+  askAboutRequest();
 }
 
 boot();

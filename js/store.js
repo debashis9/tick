@@ -29,7 +29,11 @@ const DEFAULT_SETTINGS = {
   invite: null,      // lets this device create a cloud backup (see worker/vault.js)
   name: '',          // used to greet you on Today; stays on this device
   nameAsked: false,  // the welcome card was answered or dismissed
-  adminKey: null,    // set on the device of whoever runs this copy of Tick (see views/admin.js)
+  adminKey: null,    // the admin key unlocked the Admin tab on this device (a fallback; see views/admin.js)
+  request: null,     // asking for cloud backup: { id, secret, status, at }
+  backupNotice: null, // why backup went off here (the admin revoked it)
+  isAdmin: false,    // this device holds an admin's backup (learned on each sync)
+  adminPending: 0,   // requests waiting, for the Admin tab's badge
 };
 
 // Everything, tombstones included. The views read `store`, which holds only what's live.
@@ -345,8 +349,8 @@ export async function eraseAll() {
   store.entries = new Map();
   store.vault = null;
   // Who you are on this device (name, invite, admin key) isn't data about habits: it stays.
-  const { theme, weekStart, pushSynced, invite, name, nameAsked, adminKey } = snapshot.settings;
-  store.settings = { ...DEFAULT_SETTINGS, seeded: true, firstUsedOn: todayKey(), theme, weekStart, pushSynced, invite, name, nameAsked, adminKey };
+  const { theme, weekStart, pushSynced, invite, name, nameAsked, adminKey, request } = snapshot.settings;
+  store.settings = { ...DEFAULT_SETTINGS, seeded: true, firstUsedOn: todayKey(), theme, weekStart, pushSynced, invite, name, nameAsked, adminKey, request };
   await db.setLocal('settings', localSettings());
   changed();
   return async () => {

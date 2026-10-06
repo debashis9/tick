@@ -475,3 +475,27 @@ span.yc { display: block; }
 a.btn-sm { text-decoration: none; color: inherit; }
 #adm-form { gap: 12px; }
 .row .seg button { white-space: nowrap; padding: 7px 12px; }
+
+/* ---------- asking for backup, the Admin tab ---------- */
+.state.wait { background: color-mix(in oklch, var(--h-blue) 14%, var(--surface)); color: var(--text); }
+.state.wait::before { background: var(--h-blue); }
+.err-t { color: var(--danger); }
+.rq { display: flex; flex-direction: column; gap: 14px; }
+.more-invite summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text-2); }
+.more-invite[open] { display: flex; flex-direction: column; gap: 10px; }
+.more-invite[open] summary { margin-bottom: 4px; }
+.more-invite .btn-sm { align-self: flex-start; }
+.navicon { position: relative; display: inline-grid; }
+.badge { position: absolute; top: -5px; right: -9px; min-width: 17px; height: 17px; box-sizing: border-box; padding: 0 4px; border-radius: 9px; background: var(--danger); color: #fff; font: 700 10.5px/17px var(--font-ui); text-align: center; box-shadow: 0 0 0 2px var(--surface); }
+@media (min-width: 900px) { .badge { box-shadow: 0 0 0 2px var(--bg); } }
+@media (max-width: 899px) { .nav-item { min-width: 64px; } }
+.admrow { flex-wrap: wrap; align-items: flex-start; }
+.admrow .rt { min-width: 200px; }
+.admrow .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.admrow.dim { opacity: .6; }
+.quote { margin-top: 2px; font-size: 14px; font-style: italic; color: var(--text); }
+.tag { display: inline-block; margin-left: 4px; padding: 2px 7px; border-radius: 6px; background: var(--surface-2); color: var(--text-2); font-size: 11.5px; font-weight: 650; vertical-align: 1px; }
+.tag.st-pending { background: color-mix(in oklch, var(--h-blue) 16%, var(--surface)); color: var(--text); }
+.tag.st-approved { background: color-mix(in oklch, var(--h-green) 18%, var(--surface)); color: var(--text); }
+.tag.st-rejected, .tag.st-revoked { background: color-mix(in oklch, var(--danger) 14%, var(--surface)); color: var(--text); }
+.notice > button { flex: none; }

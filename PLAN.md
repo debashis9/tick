@@ -883,6 +883,40 @@ Taken from Pie (`../split`), which built them the same day; the code is Pie's, i
 
 ---
 
+## 14. Asking for cloud backup, and the Admin tab (2026-10-06)
+
+The user found "Cloud backup needs an invite link from the person who runs Tick", met only at
+the last step of turning backup on, clumsy. Sol had already solved it (its PLAN §13.3, and the
+change of 2026-10-06 that made being the admin belong to a backup). Tick takes the same design
+and the same server code.
+
+- **Request, then approve; invites too.** Without an invite or an approval, Settings offers *Ask
+  for cloud backup* (your name, filled in from Today, and "how do they know you?"). Tick checks
+  the answer each time it opens; approval shows on Today and in Settings. Invite links still
+  skip the wait, and can be pasted on iPhones.
+- **Being the admin belongs to a backup** (`vaults.is_admin`). Any device holding an admin's
+  backup gets an **Admin tab** in the navigation, with a badge for waiting requests (the count
+  rides on each sync) and a note on Today. It approves or rejects, lists backups by owner name,
+  size, records and last sync, revokes (encrypted data deleted, the device told why, its habits
+  kept), makes other backups admins, and asks the server to sign invite links.
+- **Names are linked to backups** (decided with the user). The server newly stores each
+  request's name and note, and each backup's owner name, how it was allowed and whether it is an
+  admin's. It still can't read any habit or tick. Settings → Privacy says so.
+- **The first admin** is set up in the app, not with Sol's terminal command: the admin key
+  (admin link) unlocks the tab, and *Make my backup the admin* marks this device's backup. Then
+  the key can be forgotten. The key stays a fallback.
+- **No notification for new requests** (decided with the user). In Tick every push means "a
+  reminder is due", and reminders live in the Durable Object, which stays untouched. The badge
+  and Today's note are enough; Sol treats its notification as optional too.
+- Code: `worker/vault.js` is Sol's Worker code for vaults, requests and admin (without its
+  reminders, voice and notifications); `js/sync-core.js` is Sol's current file, identical;
+  `js/admin-api.js` and `js/admin.js` are Sol's; the Admin tab and the request sheet are Sol's in
+  Tick's markup. Migration `0002_requests_admin.sql`. The key-only admin page from Pie (§13) is
+  replaced, and `/api/admin/stats` with it.
+- Erase keeps an approved request (it belongs to the person), so backup can be turned on again.
+
+---
+
 ## Sources
 - Loop Habit Tracker (strength score, matrix view): https://github.com/iSoron/uhabits ·
   FAQ: https://github.com/iSoron/uhabits/discussions/689

@@ -1,11 +1,12 @@
 // Cache-first app shell. Bump VERSION on every deploy: the browser only installs a new
 // service worker when this file's bytes change, and the app then offers "Refresh".
-const VERSION = 'tick-v5';
+const VERSION = 'tick-v6';
 
 const SHELL = [
   './',
   './styles.css',
   './manifest.webmanifest',
+  './js/admin-api.js',
   './js/admin.js',
   './js/app.js',
   './js/backup-ui.js',

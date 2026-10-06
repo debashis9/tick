@@ -1,9 +1,9 @@
 // The cloud backup sheets: turning it on (save the code, check it), linking another device,
 // showing the code again, and turning it off.
 
-import { store } from './store.js';
+import { store, saveSettings } from './store.js';
 import { formatCode, normalizeCode } from './crypto.js';
-import { newCode, turnOn, link, turnOff, explain } from './sync.js';
+import { newCode, turnOn, link, turnOff, explain, requestBackup } from './sync.js';
 import { ICON, openSheet, esc, toast, render, plural } from './ui.js';
 
 const head = title => `<div class="grab"></div>
@@ -146,4 +146,46 @@ export function openTurnOff() {
       err.textContent = explain(e); err.hidden = false;
     }
   });
+}
+
+// ---------- asking for cloud backup ----------
+// The name and note go to the admin; an invite link (pasted here, for iPhones where the Home
+// Screen app doesn't share Safari's storage) skips the wait. As in Sol.
+export function openRequest() {
+  const r = store.settings.request;
+  const sheet = openSheet(`${head('Ask for cloud backup')}
+    <p class="sub">Cloud backup is for people the person who runs Tick knows. Your name and a line about how they know you go to them. Once they approve, you can turn backup on here.</p>
+    <form id="rq-form" class="rq" novalidate>
+      <div class="field"><label class="flabel" for="rq-name">Your name</label>
+        <input class="text-in" id="rq-name" maxlength="60" autocomplete="name" value="${esc(store.settings.name)}"></div>
+      <div class="field"><label class="flabel" for="rq-note">How do they know you? <em>optional</em></label>
+        <input class="text-in" id="rq-note" maxlength="300" placeholder="e.g. from the running club"></div>
+      <p class="err" id="rq-err" role="alert" hidden></p>
+      <button class="btn-primary" type="submit">${r?.status === 'rejected' ? 'Ask again' : 'Send request'}</button>
+    </form>
+    <details class="more-invite"><summary>I have an invite link</summary>
+      <div class="field"><label class="flabel" for="rq-invite">Paste the invite link</label>
+        <input class="text-in" id="rq-invite" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://tick…/?invite=…"></div>
+      <button type="button" class="btn-sm" data-useinvite>Use invite</button></details>`, async (ev, close, scrim) => {
+    if (!ev.target.closest('[data-useinvite]')) return;
+    const raw = scrim.querySelector('#rq-invite').value.trim();
+    const token = (/[?&]invite=([\w-]+\.[\w-]+)/.exec(raw) || /^([\w-]+\.[\w-]+)$/.exec(raw))?.[1];
+    if (!token) return toast("That doesn't look like a Tick invite link.");
+    await saveSettings({ invite: token });
+    close(); render();
+    toast('Invite saved. You can turn on backup now.');
+  });
+  sheet.scrim.querySelector('#rq-form').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const root = sheet.scrim, err = root.querySelector('#rq-err'), name = root.querySelector('#rq-name').value.trim();
+    if (!name) { err.textContent = 'Add your name, so they know who is asking.'; err.hidden = false; return; }
+    const b = root.querySelector('#rq-form button'); b.disabled = true; b.textContent = 'Sending…';
+    try {
+      if (!store.settings.name) await saveSettings({ name, nameAsked: true });
+      const status = await requestBackup(name, root.querySelector('#rq-note').value.trim());
+      sheet.close(); render();
+      toast(status === 'approved' ? "You're already approved. Turn on backup in Settings." : 'Request sent. Tick checks for an answer each time you open it.');
+    } catch (e) { err.textContent = explain(e); err.hidden = false; b.disabled = false; b.textContent = 'Try again'; }
+  });
+  setTimeout(() => sheet.scrim.querySelector(store.settings.name ? '#rq-note' : '#rq-name')?.focus(), 60);
 }

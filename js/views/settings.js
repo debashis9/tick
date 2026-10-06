@@ -4,8 +4,9 @@ import { openEditor } from '../sheets.js';
 import { exportBackup, importBackup } from '../backup.js';
 import { applyTheme } from '../theme.js';
 import { pushProblem, permission, sendTest } from '../push.js';
-import { syncNow, explain } from '../sync.js';
-import { openTurnOn, openLink, openShowCode, openTurnOff } from '../backup-ui.js';
+import { syncNow, explain, checkRequest } from '../sync.js';
+import { openTurnOn, openLink, openShowCode, openTurnOff, openRequest } from '../backup-ui.js';
+import { isAdminDevice } from '../admin.js';
 
 const el = () => $('#view-settings');
 let confirmErase = false;
@@ -36,21 +37,38 @@ function ago(ms) {
   return `on ${new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
 }
 
+// The cloud backup group says where this device stands: on, approved (or invited), waiting,
+// not approved, or off. Without an invite or an approval, it offers to ask (as in Sol), not a
+// Turn on button that would fail at the last step.
 function cloudHTML() {
-  const v = store.vault;
-  const [cls, label] = !v ? ['', 'Off'] : v.lastError ? ['warn', 'Needs attention'] : ['on', 'On'];
-  const text = !v ? 'Keeps an encrypted copy of your habits and ticks, and keeps your devices in step. It is locked on this device before it is uploaded, so only your devices can read it.'
-    : v.lastError ? v.lastError
-    : v.lastSyncAt ? `Backed up ${ago(v.lastSyncAt)}. Encrypted on this device before it is uploaded.`
-    : 'Backing up…';
+  const v = store.vault, s = store.settings, r = s.request;
+  const canTurnOn = !!s.invite || r?.status === 'approved';
+  const link = '<button class="btn-sm quiet" type="button" data-act="bk-link">I have a recovery code</button>';
+  let cls, label, text, acts;
+  if (v) {
+    [cls, label] = v.lastError ? ['warn', 'Needs attention'] : ['on', 'On'];
+    text = v.lastError ? v.lastError : v.lastSyncAt ? `Backed up ${ago(v.lastSyncAt)}. Encrypted on this device before it is uploaded.` : 'Backing up…';
+    acts = '<button class="btn-sm" type="button" data-act="bk-sync">Back up now</button><button class="btn-sm" type="button" data-act="bk-code">Show recovery code</button><button class="btn-sm quiet" type="button" data-act="bk-off">Turn off…</button>';
+  } else if (canTurnOn) {
+    [cls, label] = ['on', r?.status === 'approved' ? 'Approved' : 'Invited'];
+    text = 'You can turn on cloud backup on this device. Your habits are locked here before they are uploaded, so nobody else can read them, including whoever runs Tick.';
+    acts = `<button class="btn-sm strong" type="button" data-act="bk-on">Turn on backup</button>${link}`;
+  } else if (r?.status === 'pending') {
+    [cls, label] = ['wait', 'Waiting for approval'];
+    text = `You asked ${ago(r.at)}. Tick checks for an answer each time you open it.`;
+    acts = `<button class="btn-sm" type="button" data-act="bk-check">Check now</button>${link}`;
+  } else {
+    [cls, label] = ['', r?.status === 'rejected' ? 'Not approved' : 'Off'];
+    text = r?.status === 'rejected' ? "Your request wasn't approved. You can ask again, or keep using Tick on this device (a backup file keeps a copy)."
+      : 'Keeps an encrypted copy of your habits and ticks, and keeps your devices in step. It is locked on this device before it is uploaded, so only your devices can read it.';
+    acts = `<button class="btn-sm strong" type="button" data-act="bk-request">${r?.status === 'rejected' ? 'Ask again' : 'Ask for cloud backup'}</button>${link}`;
+  }
   return `<div class="glabel">Cloud backup</div>
     <div class="group">
       <div class="row"><div class="rt"><div class="rtitle">End-to-end encrypted backup</div><div class="rs">${esc(text)}</div></div>
         <span class="state ${cls}">${label}</span></div>
-      ${!v && store.settings.invite ? '<div class="row"><div class="rt"><div class="rs">You have an invite for cloud backup on this device.</div></div></div>' : ''}
-      <div class="row wrap actions">${v
-        ? '<button class="btn-sm" type="button" data-act="bk-sync">Back up now</button><button class="btn-sm" type="button" data-act="bk-code">Show recovery code</button><button class="btn-sm quiet" type="button" data-act="bk-off">Turn off…</button>'
-        : '<button class="btn-sm strong" type="button" data-act="bk-on">Turn on backup</button><button class="btn-sm quiet" type="button" data-act="bk-link">I have a recovery code</button>'}</div>
+      ${s.backupNotice && !v ? `<div class="row"><div class="rt"><div class="rs err-t">${esc(s.backupNotice)}</div></div></div>` : ''}
+      <div class="row wrap actions">${acts}</div>
     </div>`;
 }
 
@@ -139,13 +157,13 @@ export function renderSettings() {
     <div class="glabel">Privacy</div>
     <div class="group">
       <div class="row"><div class="rt"><div class="rs">Only your devices can read what you track. Tick has no accounts and no analytics, and no server ever receives your habits or ticks in a form it can read. Two things use a server: reminders (see Reminders above) and cloud backup, if you turn it on.</div></div></div>
-      <div class="row"><div class="rt"><div class="rs">With cloud backup on, each habit and tick is encrypted on this device with a key made from your recovery code before it is uploaded. The server stores only encrypted data. It can see that a backup exists, how many records it has, and when your devices sync. It can't see your habits' names, which days you ticked, or amounts and kinds.</div></div></div>
+      <div class="row"><div class="rt"><div class="rs">With cloud backup on, each habit and tick is encrypted on this device with a key made from your recovery code before it is uploaded. The server stores only encrypted data. It can see that a backup exists, how many records it has, and when your devices sync. It can't see your habits' names, which days you ticked, or amounts and kinds. Asking for backup sends your name and the note you write to the person who runs Tick, and your backup is listed under that name on their admin page.</div></div></div>
       <div class="row"><div class="rt"><div class="rtitle">Erase all data</div><div class="rs">Removes every habit and tick from this device.${store.vault ? ' Cloud backup is turned off here; the cloud copy is kept, and you can open it again with your recovery code.' : ''}</div></div>
         <button class="btn-sm danger" type="button" data-act="erase">${confirmErase ? 'Tap again to erase' : 'Erase'}</button></div>
     </div>
 
-    ${s.adminKey ? `<div class="glabel">Admin</div>
-    <div class="group"><div class="row"><div class="rt"><div class="rtitle">Admin page</div><div class="rs">Invite links for cloud backup, and what the server holds.</div></div>
+    ${isAdminDevice() ? `<div class="glabel">Admin</div>
+    <div class="group"><div class="row"><div class="rt"><div class="rtitle">Admin</div><div class="rs">Requests for cloud backup, backups, invite links.</div></div>
       <a class="btn-sm" href="#admin">Open</a></div></div>` : ''}
     ${appVersion.text ? `<p class="foot" id="set-version">This is Tick ${esc(appVersion.text)}.</p>` : ''}`;
   if (window.QRCode) {
@@ -200,6 +218,13 @@ export function bindSettings() {
         try { await sendTest(); toast('Test sent. It should arrive in a few seconds.'); }
         catch (e) { console.warn(e); toast(navigator.onLine ? "Couldn't send a test. Try again later." : 'Connect to the internet to send a test.'); }
         return;
+      }
+      if (act === 'bk-request') return openRequest();
+      if (act === 'bk-check') {
+        t.closest('[data-act]').disabled = true;
+        const st = await checkRequest();
+        renderSettings();
+        return toast(st === 'approved' ? 'Approved! Turn on backup whenever you like.' : st === 'rejected' ? "Your request wasn't approved." : 'No answer yet.');
       }
       if (act === 'bk-on') return openTurnOn();
       if (act === 'bk-link') return openLink();

@@ -122,8 +122,10 @@ test('two devices end up with the same habits and ticks, and the server holds on
   // Nothing readable on the server: no names, dates, kinds, units, colors, field names, local
   // ids or the auth secret. Short words are searched for as they'd appear in plaintext JSON
   // ("Jog"), since three random letters turn up inside base64 ciphertext now and then.
+  // (The vaults table has a name column of its own, for the Admin tab; records have none.)
   const dump = JSON.stringify(rows(env)) + JSON.stringify(env.DB.raw.prepare('SELECT * FROM vaults').all());
-  for (const plain of ['Walk / Jog / Run', '"Jog"', 'Read a book', '"pages"', '2026-09', '"green"', '"amount"', '"habit"', '"check"', '"prefs"', '"name"', walk, read, 'c:', phone.keys.authSecret]) {
+  assert.ok(!JSON.stringify(rows(env)).includes('"name"'));
+  for (const plain of ['Walk / Jog / Run', '"Jog"', 'Read a book', '"pages"', '2026-09', '"green"', '"amount"', '"habit"', '"check"', '"prefs"', walk, read, 'c:', phone.keys.authSecret]) {
     assert.ok(!dump.includes(plain), `server dump contains ${plain}`);
   }
   // And every stored value is ciphertext: base64url, padded to 256 bytes plus the 16-byte tag.
@@ -398,35 +400,4 @@ test('the server rejects malformed pushes', async () => {
   for (const bad of [[{ id: 'short', iv: 'a'.repeat(16), ct: 'x' }], [{ id: 'a'.repeat(22), iv: 'bad', ct: 'x' }], [{ id: 'a'.repeat(22), iv: 'a'.repeat(16), ct: '<script>' }]]) {
     await assert.rejects(c.push(bad), e => e.status === 400);
   }
-});
-
-test('the admin page: the right key sees counts and sizes, and nothing else', async () => {
-  const { fetchStats, signInvite: appSign, inviteToken } = await import('../js/admin.js');
-  const secret = 'admin-key-for-tests';
-  // An invite made in the app is one the Worker accepts: the two signing functions agree.
-  assert.equal(await appSign('k', { exp: 5 }), await signInvite('k', { exp: 5 }));
-
-  const s = server({ INVITE_SECRET: secret });
-  const viaApi = (path, init) => s.fetchFn('https://tick.test' + path, init);
-  const keys = await deriveKeys(newVaultKey());
-  await apiClient(BASE, keys, s.fetchFn).create(await inviteToken(secret, 1));
-  const d = device();
-  d.sync = () => syncOnce(keys, apiClient(BASE, keys, s.fetchFn), d);
-  const h = d.addHabit('Secret habit');
-  d.tick(h, '2026-10-05');
-  await d.sync();
-
-  const st = await fetchStats(secret, viaApi);
-  assert.equal(st.vaults, 1); assert.equal(st.records, 2); assert.ok(st.bytes > 500); assert.equal(st.quota, 25 * 1024 * 1024);
-  assert.equal(st.list.length, 1); assert.equal(st.list[0].records, 2); assert.equal(st.list[0].id, keys.vaultId.slice(0, 6));
-  assert.ok(!JSON.stringify(st).includes('Secret') && !JSON.stringify(st).includes(keys.vaultId));
-
-  await assert.rejects(fetchStats('wrong', viaApi), e => e.status === 401);
-  await assert.rejects(fetchStats('', viaApi), e => e.status === 401);
-  await assert.rejects(fetchStats(secret + 'x', viaApi), e => e.status === 401);
-  assert.equal((await viaApi('/api/admin/stats', { headers: { authorization: `Bearer ${keys.vaultId}.${keys.authSecret}` } })).status, 401);
-  assert.equal((await viaApi('/api/admin/other', { headers: { authorization: `Bearer admin.${secret}` } })).status, 404);
-  // A server with no INVITE_SECRET has no admin: nobody can unlock anything.
-  const open = server();
-  await assert.rejects(fetchStats('anything', (path, init) => open.fetchFn('https://tick.test' + path, init)), e => e.code === 'no_admin');
 });

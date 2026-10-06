@@ -31,6 +31,15 @@ const isStandalone = () => matchMedia('(display-mode: standalone)').matches || n
 
 function bannerHTML() {
   const s = store.settings;
+  // The admin's devices: people waiting for an answer about cloud backup.
+  if (s.isAdmin && store.vault && s.adminPending > 0) {
+    return `<div class="notice"><span>${s.adminPending === 1 ? 'Someone is' : `${s.adminPending} people are`} waiting for cloud backup. Approve or reject on the Admin tab.</span>
+      <button type="button" data-act="goto-admin">Review</button></div>`;
+  }
+  if (!store.vault && s.request?.status === 'approved') {
+    return `<div class="notice"><span>Cloud backup was approved. Turn it on to keep your habits safe and see them on your other devices.</span>
+      <button type="button" data-act="goto-settings">Turn on</button></div>`;
+  }
   if (isIOS && !isStandalone() && !s.installTipDismissed) {
     return `<div class="notice"><span>Add Tick to your Home Screen so Safari doesn't clear your history: tap Share, then Add to Home Screen.</span>
       <button type="button" data-act="dismiss-install">Got it</button></div>`;
@@ -126,6 +135,7 @@ export function bindToday() {
     const act = t.closest('[data-act]')?.dataset.act;
     if (act === 'today') { view.selDate = todayKey(); return renderToday(); }
     if (act === 'new') return openEditor(null);
+    if (act === 'goto-admin' || act === 'goto-settings') return document.querySelector(`.nav [data-tab="${act.slice(5)}"]`)?.click();
     if (act === 'skip-name') return saveSettings({ nameAsked: true }).then(renderToday, storageError);
     if (act === 'dismiss-install') return saveSettings({ installTipDismissed: true }).then(renderToday, storageError);
     if (act === 'snooze-backup') return saveSettings({ backupSnoozedUntil: key(addDays(parse(todayKey()), 7)) }).then(renderToday, storageError);

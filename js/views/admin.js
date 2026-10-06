@@ -1,72 +1,128 @@
-// The admin page (#admin): for whoever runs this copy of Tick. Unlocked with the server's admin
-// key, on this device only. It makes invite links for cloud backup and shows how many backups
-// the server holds and how big they are. It can't see inside any backup: nobody can without
-// that backup's recovery code.
+// The Admin tab: for whoever runs this copy of Tick (the same design as Sol's). It appears on any
+// device that holds an admin's backup, and as a fallback on a device unlocked with the server's
+// admin key. Approve or reject requests for cloud backup, see each backup's owner, size and last
+// sync, revoke one, make someone else an admin, and make invite links. It can't see inside any
+// backup: habits and ticks are encrypted with a key only their owner's devices have.
 
 import { store, saveSettings } from '../store.js';
-import { fetchStats, inviteToken, inviteUrl, explainAdmin } from '../admin.js';
-import { key as dateKey, parse, DAY_SHORT, MON_SHORT } from '../dates.js';
-import { $, esc, toast, storageError } from '../ui.js';
+import { myAdminApi, adminApi, isAdminDevice, inviteToken, inviteUrl, explainAdmin } from '../admin.js';
+import { syncNow } from '../sync.js';
+import { parse, key as dateKey, DAY_SHORT, MON_SHORT } from '../dates.js';
+import { $, esc, toast, storageError, plural, render } from '../ui.js';
 
 const el = () => $('#view-admin');
-const state = { stats: null, error: '', busy: false, link: '', days: 14 };
+const state = { data: null, error: '', busy: false, link: '', days: 30, confirm: null };
 const size = b => (b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(b < 10240 ? 1 : 0)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`);
-const day = ms => { const d = parse(dateKey(new Date(ms))); return `${DAY_SHORT[d.getDay()]} ${d.getDate()} ${MON_SHORT[d.getMonth()]} ${d.getFullYear()}`; };
+const when = ms => { if (!ms) return '—'; const d = parse(dateKey(new Date(ms))); return `${DAY_SHORT[d.getDay()]} ${d.getDate()} ${MON_SHORT[d.getMonth()]} ${d.getFullYear()}`; };
+function ago(ms) {
+  if (!ms) return 'never';
+  const d = Math.floor((Date.now() - ms) / 864e5);
+  return d < 1 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`;
+}
+const STATUS = { pending: 'Waiting', approved: 'Approved', rejected: 'Rejected', revoked: 'Revoked' };
+
+function requestsHTML(list) {
+  if (!list.length) return '<div class="row"><div class="rt"><div class="rs">No requests yet. They appear here when someone taps "Ask for cloud backup".</div></div></div>';
+  return list.map(r => `<div class="row admrow">
+      <div class="rt"><div class="rtitle">${esc(r.name)} <span class="tag st-${esc(r.status)}">${STATUS[r.status] || esc(r.status)}</span></div>
+        ${r.note ? `<div class="quote">"${esc(r.note)}"</div>` : ''}
+        <div class="rs">Asked ${esc(when(r.updated_at))}${r.request_count > 1 ? ` · ${plural(r.request_count, 'time')}` : ''}${r.decided_at ? ` · decided ${esc(when(r.decided_at))}` : ''}</div></div>
+      <div class="acts">${r.status === 'pending' || r.status === 'rejected' ? `<button type="button" class="btn-sm strong" data-approve="${esc(r.id)}">Approve</button>` : ''}
+        ${r.status === 'pending' || r.status === 'approved' ? `<button type="button" class="btn-sm" data-reject="${esc(r.id)}">${r.status === 'approved' ? 'Withdraw' : 'Reject'}</button>` : ''}</div>
+    </div>`).join('');
+}
+
+function vaultsHTML(list, me) {
+  if (!list.length) return '<div class="row"><div class="rt"><div class="rs">No backups yet.</div></div></div>';
+  return list.map(v => {
+    const mine = v.id === me || v.id === store.vault?.vaultId;
+    return `<div class="row admrow${v.revoked_at ? ' dim' : ''}">
+      <div class="rt"><div class="rtitle">${esc(v.name || 'No name')}${mine ? ' <span class="tag st-approved">You</span>' : ''}${v.is_admin ? ' <span class="tag st-pending">Admin</span>' : ''} <span class="tag">${v.via === 'invite' ? 'Invite' : v.via === 'request' ? 'Request' : 'Open'}</span>${v.revoked_at ? ' <span class="tag st-revoked">Revoked</span>' : ''}</div>
+        <div class="rs">${v.revoked_at ? `Revoked ${esc(when(v.revoked_at))}` : `${size(v.bytes)} · ${plural(v.records, 'record')} · last sync ${esc(ago(v.used_at))}`} · since ${esc(when(v.created_at))}</div></div>
+      <div class="acts">${v.revoked_at || mine ? '' : state.confirm === v.id
+        ? `<button type="button" class="btn-sm danger" data-revoke="${esc(v.id)}">Delete their backup</button><button type="button" class="btn-sm quiet" data-cancel>Cancel</button>`
+        : `<button type="button" class="btn-sm quiet" data-admin="${esc(v.id)}" data-on="${v.is_admin ? 0 : 1}">${v.is_admin ? 'Remove admin' : 'Make admin'}</button><button type="button" class="btn-sm" data-ask="${esc(v.id)}">Revoke…</button>`}</div>
+    </div>`;
+  }).join('');
+}
+
+// On a device unlocked with the key that has a backup of its own, which isn't an admin's yet:
+// one tap makes it the admin's, and then the key isn't needed.
+function setupHTML(d) {
+  const s = store.settings, v = store.vault;
+  if (!s.adminKey || s.isAdmin) return '';
+  const mineIsAdmin = !!d?.vaults.find(x => x.id === v?.vaultId && x.is_admin);
+  if (!v) return `<div class="notice"><span>Turn on cloud backup on this device, and you can make it the admin's backup: then the Admin tab follows your backup to every device you open it on, with no key.</span></div>`;
+  return mineIsAdmin ? '' : `<div class="notice"><span>Make this device's backup the admin's. Every device you open your backup on then gets this tab, with no key.</span>
+    <button type="button" data-make-me>Make my backup the admin</button></div>`;
+}
 
 function unlocked() {
-  const s = state.stats;
-  const table = !s ? '' : !s.list.length ? '<div class="row"><div class="rt"><div class="rtitle">No backups yet</div><div class="rs">They appear here once someone turns cloud backup on.</div></div></div>'
-    : `<div class="scrollx"><table class="tbl"><tr><th>Backup</th><th>Records</th><th>Size</th><th>Created</th><th>Last change</th></tr>
-        ${s.list.map(v => `<tr><td><code>${esc(v.id)}…</code></td><td>${v.records}</td><td>${size(v.bytes)}</td><td>${esc(day(v.createdAt))}</td><td>${esc(day(v.usedAt))}</td></tr>`).join('')}</table></div>
-      ${s.vaults > s.list.length ? `<div class="row"><div class="rt"><div class="rs">Showing the ${s.list.length} most recently changed.</div></div></div>` : ''}`;
-  return `<div class="glabel">Invite links</div>
+  const d = state.data, t = d?.totals, s = store.settings;
+  return `${state.error ? `<div class="notice bad"><span>${esc(state.error)}</span></div>` : ''}
+    ${setupHTML(d)}
+    ${d ? `<div class="group stat3">
+      <div><b>${t.pending}</b><span>waiting for you</span></div>
+      <div><b>${t.vaults || 0}</b><span>${t.vaults === 1 ? 'backup' : 'backups'}, ${size(t.bytes || 0)}</span></div>
+      <div><b>${t.active7 || 0}</b><span>synced this week (${t.active30 || 0} in 30 days)</span></div></div>` : ''}
+    <div class="glabel row-label">Requests <button type="button" class="btn-sm" data-refresh ${state.busy ? 'disabled' : ''}>${state.busy ? 'Loading…' : 'Refresh'}</button></div>
+    <div class="group">${d ? requestsHTML(d.requests) : '<div class="row"><div class="rt"><div class="rs">Loading…</div></div></div>'}</div>
+    <div class="glabel">Backups</div>
+    <div class="group">${d ? vaultsHTML(d.vaults, d.me) : ''}
+      <div class="row"><div class="rt"><div class="rs">Each backup is encrypted with a key only its owner's devices have. The server knows who asked, the size, and when it last synced; it can't read any habit or tick. Revoking deletes the encrypted backup; the habits stay on their devices. An admin is anyone whose devices hold an admin's backup: this tab appears on all of them.</div></div></div></div>
+    <div class="glabel">Invite links</div>
     <div class="group">
-      <div class="row"><div class="rt"><div class="rs">Anyone can use Tick on their own device. An invite lets a person turn on <em>cloud backup</em> on this server. This device already has one.</div></div></div>
-      <div class="row wrap"><div class="seg" role="group" aria-label="Valid for">${[7, 14, 30, 90].map(d => `<button type="button" data-days="${d}" aria-pressed="${state.days === d}">${d} days</button>`).join('')}</div>
-        <button type="button" class="btn-sm strong" id="adm-invite">Make an invite link</button></div>
+      <div class="row"><div class="rt"><div class="rs">An invite skips the request: whoever opens it can turn on backup straight away. It works for anyone until it expires, so send it to people you've already said yes to.</div></div></div>
+      <div class="row wrap"><div class="seg" role="group" aria-label="Valid for">${[7, 30, 90].map(n => `<button type="button" data-days="${n}" aria-pressed="${state.days === n}">${n} days</button>`).join('')}</div>
+        <button type="button" class="btn-sm strong" data-invite>Make a link</button></div>
       ${state.link ? `<div class="row"><div class="rt"><div class="linkbox" id="adm-link">${esc(state.link)}</div>
-          <div class="linkrow"><button type="button" class="btn-sm" id="adm-send">Send it</button><button type="button" class="btn-sm" id="adm-copy">Copy</button></div>
-          <div class="rs">Works for anyone who opens it until it runs out in ${state.days} days. The server keeps no list of who was invited.</div></div></div>` : ''}
+        <div class="linkrow"><button type="button" class="btn-sm" data-send>Send it</button><button type="button" class="btn-sm" data-copy>Copy</button></div></div></div>` : ''}
     </div>
-    <div class="glabel row-label">Backups on the server <button type="button" class="btn-sm" id="adm-refresh" ${state.busy ? 'disabled' : ''}>${state.busy ? 'Loading…' : 'Refresh'}</button></div>
-    ${state.error ? `<div class="notice bad"><span>${esc(state.error)}</span></div>` : ''}
-    <div class="group">
-      ${s ? `<div class="stat3"><div><b>${s.vaults}</b><span>${s.vaults === 1 ? 'backup' : 'backups'}</span></div><div><b>${s.records}</b><span>encrypted records</span></div><div><b>${size(s.bytes)}</b><span>stored</span></div></div>` : ''}
-      ${table}
-      <div class="row"><div class="rt"><div class="rs">This is everything the server knows: that a backup exists, how many records it has, their size and when it last changed. Habit names, days and ticks are encrypted with a key that only the person's recovery code carries, so they can't be shown here or anywhere else. Each backup may hold up to ${s ? size(s.quota) : '25 MB'}. Reminders are kept separately and aren't shown.</div></div></div>
-    </div>
-    <button type="button" class="btn-sm wide" id="adm-lock">Lock the admin page on this device</button>`;
+    ${s.adminKey ? '<button type="button" class="btn-sm wide" data-lock>Forget the admin key on this device</button>' : ''}`;
 }
 
 export function renderAdmin() {
-  const open = !!store.settings.adminKey;
-  el().innerHTML = `
-    <header class="head"><div><a class="eyebrow back" href="#settings">‹ Settings</a><h1>Admin</h1></div></header>
-    ${open ? unlocked() : `<form class="group welcome" id="adm-form" autocomplete="off">
-      <p class="rs">For the person who runs this copy of Tick. Enter the admin key (the server's <code>INVITE_SECRET</code>) to make invite links for cloud backup and see how many backups the server holds.</p>
-      <label class="rtitle" for="adm-key">Admin key</label>
-      <div class="inline"><input class="text-in" id="adm-key" type="password" autocapitalize="off" spellcheck="false" required>
-        <button class="btn-sm strong" ${state.busy ? 'disabled' : ''}>${state.busy ? 'Checking…' : 'Unlock'}</button></div>
-      ${state.error ? `<p class="err" role="alert">${esc(state.error)}</p>` : ''}
-      <p class="fnote">The key stays on this device and is only ever sent to this site.</p></form>`}`;
-  if (open && !state.stats && !state.busy && !state.error) load();
+  const open = isAdminDevice();
+  el().innerHTML = `<header class="head"><div><div class="eyebrow">For whoever runs Tick</div><h1>Admin</h1></div></header>
+    ${open ? unlocked() : `<div class="group welcome">
+      <p class="rs">The Admin tab appears on any device that holds an admin's backup. Turn on (or open) your backup in Settings and it shows up by itself.</p>
+      <form id="adm-form" autocomplete="off"><label class="rtitle" for="adm-key">Or use the admin key (the server's <code>INVITE_SECRET</code>)</label>
+        <div class="inline"><input class="text-in" id="adm-key" type="password" autocapitalize="off" spellcheck="false" required>
+          <button class="btn-sm strong" ${state.busy ? 'disabled' : ''}>${state.busy ? 'Checking…' : 'Unlock'}</button></div>
+        ${state.error ? `<p class="err" role="alert">${esc(state.error)}</p>` : ''}</form></div>`}`;
+  if (open && !state.data && !state.busy && !state.error) load();
 }
 
 async function load() {
   state.busy = true; state.error = ''; renderAdmin();
-  try { state.stats = await fetchStats(store.settings.adminKey); } catch (err) { state.error = explainAdmin(err); }
-  state.busy = false; renderAdmin();
+  try {
+    state.data = await myAdminApi().overview();
+    if (state.data.totals.pending !== store.settings.adminPending) await saveSettings({ adminPending: state.data.totals.pending });
+  } catch (err) { state.error = explainAdmin(err); }
+  state.busy = false; renderAdmin(); updateAdminNav();
+}
+export const refreshAdmin = () => { state.data = null; state.error = ''; };
+
+// The fallback: checks a key with the server and keeps it; this device also gets an invite (a year),
+// so it can turn on backup (and then make its backup the admin's).
+export async function unlockAdmin(key) {
+  state.busy = true; state.error = ''; state.data = null;
+  try {
+    state.data = await adminApi(`Bearer admin.${key}`).overview();
+    await saveSettings({ adminKey: key, invite: store.settings.invite || await inviteToken(key, 365) });
+    return true;
+  } catch (err) { state.error = explainAdmin(err); return false; } finally { state.busy = false; updateAdminNav(); }
 }
 
-// Checks a key with the server, keeps it, and gives this device an invite of its own (a year),
-// so the admin can turn on backup without making themselves a link first.
-export async function unlockAdmin(key) {
-  state.busy = true; state.error = ''; state.stats = null;
-  try {
-    state.stats = await fetchStats(key);
-    await saveSettings({ adminKey: key, invite: await inviteToken(key, 365) });
-    return true;
-  } catch (err) { state.error = explainAdmin(err); return false; } finally { state.busy = false; }
+// The Admin item in the navigation: shown only on admin devices, with a count of waiting requests.
+export function updateAdminNav() {
+  const item = document.querySelector('.nav [data-tab="admin"]');
+  if (!item) return;
+  item.hidden = !isAdminDevice();
+  const n = store.settings.adminPending || 0, badge = item.querySelector('.badge');
+  badge.textContent = n > 9 ? '9+' : String(n);
+  badge.hidden = !n;
+  item.setAttribute('aria-label', n ? `Admin, ${plural(n, 'request')} waiting` : 'Admin');
 }
 
 export function bindAdmin() {
@@ -79,21 +135,49 @@ export function bindAdmin() {
     state.busy = true; renderAdmin();
     const ok = await unlockAdmin(key);
     renderAdmin();
-    if (ok) toast('Admin unlocked on this device. You can now turn on cloud backup too.', null, '', 7000);
+    if (ok) toast('Admin unlocked on this device.');
   });
   root.addEventListener('click', async e => {
-    const hit = s => e.target.closest(s);
-    let b;
+    const b = e.target.closest('button'); if (!b) return;
+    const ds = b.dataset;
     try {
-      if ((b = hit('[data-days]'))) { state.days = +b.dataset.days; state.link = ''; renderAdmin(); }
-      else if (hit('#adm-invite')) { state.link = inviteUrl(await inviteToken(store.settings.adminKey, state.days)); renderAdmin(); }
-      else if (hit('#adm-copy')) { await navigator.clipboard.writeText(state.link).catch(() => {}); toast('Invite link copied'); }
-      else if (hit('#adm-send')) {
-        if (navigator.share) await navigator.share({ title: 'Tick invite', text: 'An invite to turn on cloud backup in Tick:', url: state.link }).catch(() => {});
-        else { await navigator.clipboard.writeText(state.link).catch(() => {}); toast('Invite link copied'); }
+      if ('refresh' in ds) load();
+      else if (ds.approve || ds.reject) {
+        b.disabled = true;
+        await myAdminApi().decide(ds.approve || ds.reject, ds.approve ? 'approve' : 'reject');
+        toast(ds.approve ? 'Approved. Their app offers to turn on backup the next time it opens.' : 'Done.');
+        await load();
       }
-      else if (hit('#adm-refresh')) load();
-      else if (hit('#adm-lock')) { await saveSettings({ adminKey: null }); state.stats = null; state.link = ''; state.error = ''; renderAdmin(); toast('Admin page locked on this device'); }
-    } catch (err) { storageError(err); }
+      else if (ds.ask) { state.confirm = ds.ask; renderAdmin(); }
+      else if ('cancel' in ds) { state.confirm = null; renderAdmin(); }
+      else if (ds.revoke) { b.disabled = true; await myAdminApi().revoke(ds.revoke); state.confirm = null; toast('Revoked. Their backup is deleted from the server.'); await load(); }
+      else if (ds.admin) {
+        b.disabled = true;
+        await myAdminApi().setAdmin(ds.admin, ds.on === '1');
+        toast(ds.on === '1' ? "They're an admin now. The Admin tab appears on their devices after their next sync." : 'No longer an admin.');
+        await load();
+      }
+      else if ('makeMe' in ds) {
+        b.disabled = true;
+        await myAdminApi().setAdmin(store.vault.vaultId, true);
+        await syncNow().catch(() => {});   // the sync tells this device it's the admin now
+        toast('Your backup is the admin\'s now. You can forget the key on this device.', null, '', 7000);
+        await load();
+      }
+      else if (ds.days) { state.days = +ds.days; state.link = ''; renderAdmin(); }
+      else if ('invite' in ds) { state.link = inviteUrl((await myAdminApi().invite(state.days)).token); renderAdmin(); }
+      else if ('copy' in ds) { await navigator.clipboard.writeText(state.link).then(() => toast('Invite link copied'), () => toast('Select the link above to copy it')); }
+      else if ('send' in ds) {
+        if (navigator.share) await navigator.share({ title: 'Tick', text: 'Tick, a habit tracker. This link lets you turn on cloud backup:', url: state.link }).catch(() => {});
+        else await navigator.clipboard.writeText(state.link).then(() => toast('Invite link copied'), () => {});
+      }
+      else if ('lock' in ds) {
+        await saveSettings({ adminKey: null }); state.data = null; state.link = ''; state.error = '';
+        updateAdminNav(); render();
+        toast('Admin key forgotten on this device');
+      }
+    } catch (err) {
+      if (err?.status) { state.error = explainAdmin(err); renderAdmin(); } else storageError(err);
+    }
   });
 }

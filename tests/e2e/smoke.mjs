@@ -328,41 +328,77 @@ const backUpNow = async p => {
   await p.waitForSelector('#toast:has-text("Backed up")');
 };
 if (hasApi) {
+  const adminLink = execFileSync('node', ['tools/admin-link.mjs', URL]).toString().split('\n')[0];
+  const navAdmin = p => p.locator('.nav [data-tab="admin"]');
   await page.click('[data-tab="settings"]');
-  check('cloud backup starts off', (await page.textContent('.state')) === 'Off');
+  check('cloud backup starts off, offering to ask for it', (await page.textContent('.state')) === 'Off' && await page.isVisible('[data-act="bk-request"]') && !(await page.isVisible('[data-act="bk-on"]')));
+  check('no Admin tab on an ordinary device', !(await navAdmin(page).isVisible()));
+
+  // Ask for cloud backup: the name from Today is filled in.
+  await page.click('[data-act="bk-request"]');
+  check('the request is filled in with the name', (await page.inputValue('#rq-name')) === 'Deb');
+  await page.fill('#rq-note', 'Runs Tick');
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: SP + '/app-backup-request.png' });
+  await page.click('#rq-form button[type="submit"]');
+  await page.waitForSelector('#toast:has-text("Request sent")');
+  check('asking shows it is waiting for approval', (await page.textContent('.state')) === 'Waiting for approval');
+
+  // The person who runs Tick, on a device unlocked with the admin key, approves it.
+  const ADM = await device('admin');
+  const pa = ADM.page;
+  await pa.goto(URL + '#admin');
+  await pa.waitForSelector('#adm-form');
+  await pa.fill('#adm-key', 'not the key');
+  await pa.click('#adm-form button');
+  await pa.waitForSelector('#adm-form .err');
+  check('the Admin tab refuses a wrong key', (await pa.textContent('#adm-form .err')).includes("isn't this server's admin key"));
+  await pa.goto(adminLink);
+  await pa.waitForSelector('.admrow:has-text("Deb")');
+  check('the admin link unlocks the Admin tab and leaves the address', !pa.url().includes('admin=') && pa.url().endsWith('#admin'), pa.url());
+  check('the request is on the Admin tab with its note', await pa.isVisible('.admrow:has-text("Deb") .tag.st-pending') && await pa.isVisible('.admrow:has-text("Runs Tick")'));
+  check('the admin key shows the Admin tab in the navigation', await navAdmin(pa).isVisible());
+  await pa.click('.admrow:has-text("Deb") [data-approve]');
+  await pa.waitForSelector('.admrow:has-text("Deb") .tag.st-approved');
+  check('approving marks the request approved', true);
+  // An invite link from the terminal still works.
+  const invite = execFileSync('node', ['tools/invite.mjs', URL]).toString().split('\n')[0];
+  await pa.goto(invite);
+  await pa.waitForSelector('#toast:has-text("Invite saved")');
+  check('invite link is taken and removed from the address', !pa.url().includes('invite='));
+  await ADM.ctx.close();
+
+  // Back on A: the answer arrives, and backup turns on.
+  await page.click('[data-act="bk-check"]');
+  await page.waitForSelector('#toast:has-text("Approved")');
+  check('the approval reaches the device', (await page.textContent('.state')) === 'Approved' && await page.isVisible('[data-act="bk-on"]'));
   await page.click('[data-act="bk-on"]');
   await page.click('[data-next="2"]');
-  const code1 = (await page.textContent('#code')).replace(/\s/g, '');
-  check('recovery code is 28 characters', code1.length === 28, code1.length);
+  const code = (await page.textContent('#code')).replace(/\s/g, '');
+  check('recovery code is 28 characters', code.length === 28, code.length);
   check('QR code of the recovery code is drawn', await page.waitForSelector('#qr-code img[src^="data:image/png"], #qr-code canvas', { state: 'attached', timeout: 3000 }).then(() => true, () => false));
   await page.screenshot({ path: SP + '/app-backup-code.png' });
   await page.click('[data-next="3"]');
   await page.fill('#last4', 'XXXX');
   await page.click('[data-go]');
   check('wrong last 4 is caught', (await page.textContent('#bk-err')).includes("doesn't match"));
-  await page.fill('#last4', code1.slice(-4).toLowerCase());
-  await page.click('[data-go]');
-  await page.waitForSelector('#bk-err:has-text("invite")', { timeout: 5000 }).catch(() => {});
-  check('without an invite, the server refuses', (await page.textContent('#bk-err')).includes('invite'), await page.textContent('#bk-err'));
-  await page.click('.sheet [data-close]');
-  await sheetClosed(page);
-
-  // Open an invite link, then turn backup on for real.
-  const invite = execFileSync('node', ['tools/invite.mjs', URL]).toString().split('\n')[0];
-  await page.goto(invite);
-  await page.waitForSelector('#toast:has-text("Invite saved")');
-  check('invite link is taken and removed from the address', !page.url().includes('invite='));
-  await page.click('[data-tab="settings"]');
-  await page.click('[data-act="bk-on"]');
-  await page.click('[data-next="2"]');
-  const code = (await page.textContent('#code')).replace(/\s/g, '');
-  await page.click('[data-next="3"]');
-  await page.fill('#last4', code.slice(-4));
+  await page.fill('#last4', code.slice(-4).toLowerCase());
   await page.click('[data-go]');
   await sheetClosed(page);
   await page.waitForSelector('.state.on');
   check('backup turns on', await page.isVisible('.state.on'));
   check('upload reported', (await page.textContent('#toast')).includes('encrypted and uploaded'), await page.textContent('#toast'));
+
+  // A becomes the admin: the admin link once, "Make my backup the admin", then forget the key.
+  await page.goto(adminLink);
+  await page.waitForSelector('[data-make-me]');
+  await page.click('[data-make-me]');
+  await page.waitForSelector('#toast:has-text("admin\'s now")');
+  await page.waitForSelector('[data-lock]');
+  await page.click('[data-lock]');
+  await page.waitForTimeout(300);
+  check('after forgetting the key, the backup keeps this device the admin', await navAdmin(page).isVisible() && !(await dumpDB(page)).local.find(r => r.key === 'settings').value.adminKey);
+  await page.click('[data-tab="settings"]');
   await page.screenshot({ path: SP + '/app-backup-on.png', fullPage: true });
   await page.click('[data-tab="today"]');
   const namesA = await cardNames(page);
@@ -384,6 +420,8 @@ if (hasApi) {
   await pb.click('[data-link]');
   await sheetClosed(pb);
   check('device B opens the backup', await pb.isVisible('.state.on'));
+  await pb.waitForTimeout(500);
+  check('device B gets the Admin tab from the backup, with nothing typed', await navAdmin(pb).isVisible());
   await pb.click('[data-tab="today"]');
   await pb.waitForSelector('.card');
   const namesB = await cardNames(pb);
@@ -428,7 +466,8 @@ if (hasApi) {
     const dump = execFileSync(cmd, [...args, 'd1', 'execute', 'tick', '--local', ...(process.env.PERSIST_TO ? ['--persist-to', process.env.PERSIST_TO] : []), '--json', '--command', 'SELECT * FROM records; SELECT * FROM vaults'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
     // Short words are searched for as plaintext JSON would hold them ("Gym"): three random
     // letters turn up inside base64 ciphertext now and then.
-    const leaks = ['Walk / Jog / Run', '"Jog"', 'Read a book', 'Meditate', '"Gym"', '"Pages"', '"pages"', '2026-', '"name"', meditate, code].filter(x => dump.includes(x));
+    // (The vaults table has a name column for the Admin tab; the owners' names are expected there.)
+    const leaks = ['Walk / Jog / Run', '"Jog"', 'Read a book', 'Meditate', '"Gym"', '"Pages"', '"pages"', '2026-', meditate, code].filter(x => dump.includes(x));
     const cts = [...dump.matchAll(/"ct":\s*"([^"]*)"/g)].map(m => m[1]);
     const sealed = cts.length > 0 && cts.every(ct => /^[\w-]+$/.test(ct) && (Buffer.from(ct, 'base64url').length - 16) % 256 === 0);
     check('server stores no readable habits or ticks', !leaks.length && sealed, leaks.join(', ') || `${cts.length} records`);
@@ -450,43 +489,71 @@ if (hasApi) {
   await page.click('[data-act="erase"]');
   await page.click('[data-act="erase"]');
   await page.waitForTimeout(200);
-  check('erase turns backup off on this device', (await page.textContent('.state')) === 'Off' && (await page.$$('.habit-row')).length === 0);
+  // The approval belongs to the person, so it stays: backup can be turned on again.
+  check('erase turns backup off on this device', (await page.textContent('.state')) === 'Approved' && (await page.$$('.habit-row')).length === 0 && !(await navAdmin(page).isVisible()),
+    `${await page.textContent('.state')} | ${(await page.$$('.habit-row')).length} | admin tab ${await navAdmin(page).isVisible()}`);
   await page.click('#toast button');
   await page.waitForSelector('.state.on');
-  check('undoing an erase restores the habits and the backup link', (await page.$$('.habit-row')).length === 4);
+  check('undoing an erase restores the habits, the backup link and the Admin tab', (await page.$$('.habit-row')).length === 4 && await navAdmin(page).isVisible());
   await backUpNow(page);
   const afterUndo = await dumpDB(page);
   check('nothing is left to upload after the undo', afterUndo.dirty.length === 0 && afterUndo.local.some(r => r.key === 'vault'), `${afterUndo.dirty.length} dirty`);
 
-  // ---------- the admin page ----------
-  await page.goto(URL + '#admin');
-  await page.waitForSelector('#adm-form');
-  await page.fill('#adm-key', 'not the key');
-  await page.click('#adm-form button');
-  await page.waitForSelector('#adm-form .err');
-  check('the admin page refuses a wrong key', (await page.textContent('#adm-form .err')).includes("isn't this server's admin key"));
-  const adminLink = execFileSync('node', ['tools/admin-link.mjs', URL]).toString().split('\n')[0];
-  await page.goto(adminLink);
-  await page.waitForSelector('.stat3');
-  check('the admin link unlocks the page and leaves the address', !page.url().includes('admin=') && page.url().endsWith('#admin'), page.url());
-  const backups = Number(await page.textContent('.stat3 > div:first-child b'));
-  check('the admin page counts the backups on the server', backups >= 1 && (await page.$$('.tbl tr')).length >= 2, String(backups));
+  // ---------- someone else asks; the admin's devices hear about it ----------
+  const D = await device('D');
+  const pd = D.page;
+  await pd.goto(URL);
+  await pd.waitForSelector('#name-form');
+  await pd.fill('#name-in', 'Meera');
+  await pd.click('#name-form button[type="submit"]');
+  await pd.click('[data-tab="settings"]');
+  await pd.click('[data-act="bk-request"]');
+  await pd.fill('#rq-note', 'from the running club');
+  await pd.click('#rq-form button[type="submit"]');
+  await pd.waitForSelector('#toast:has-text("Request sent")');
+  await backUpNow(page);
+  // A background sync that started before the request reports 0; the next one, right after, has it.
+  await page.waitForFunction(() => document.querySelector('.nav [data-tab="admin"] .badge')?.textContent === '1', null, { timeout: 8000 }).catch(() => {});
+  check('the Admin tab shows a badge for the waiting request', (await navAdmin(page).locator('.badge').textContent()) === '1',
+    `${await navAdmin(page).locator('.badge').evaluate(b => b.hidden + '|' + b.textContent)} | ${JSON.stringify((({ isAdmin, adminPending }) => ({ isAdmin, adminPending }))((await dumpDB(page)).local.find(r => r.key === 'settings').value))}`);
+  await page.click('[data-tab="today"]');
+  check('Today tells the admin someone is waiting', await page.isVisible('.notice:has-text("waiting for cloud backup")'));
+  await page.click('[data-act="goto-admin"]');
+  await page.waitForSelector('.admrow:has-text("Meera")');
+  check('the Admin tab lists the request and the backups by name', await page.isVisible('.admrow:has-text("from the running club")') && await page.isVisible('.admrow:has-text("Deb") .tag.st-approved'));
+  await page.click('.admrow:has-text("Meera") [data-approve]');
+  await page.waitForSelector('.admrow:has-text("Meera") .tag.st-approved');
   await page.click('[data-days="7"]');
-  await page.click('#adm-invite');
+  await page.click('[data-invite]');
   const made = await page.textContent('#adm-link');
-  check('the admin page makes an invite link', made.startsWith(URL + '?invite=') && made.length > URL.length + 40);
-  check('a made invite is one the server accepts', await fetch(URL + 'api/vault', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ vaultId: randomBytes(16).toString('base64url'), authHash: randomBytes(32).toString('hex'), invite: made.split('?invite=')[1] }) }).then(r => r.status === 201));
+  check('the Admin tab makes an invite link the server accepts', made.startsWith(URL + '?invite=') && await fetch(URL + 'api/vault', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ vaultId: randomBytes(16).toString('base64url'), authHash: randomBytes(32).toString('hex'), invite: made.split('?invite=')[1] }) }).then(r => r.status === 201));
   await page.screenshot({ path: SP + '/app-admin.png', fullPage: true });
-  await page.click('[data-tab="settings"]');
-  check('Settings shows the Admin row once unlocked', await page.isVisible('a[href="#admin"]'));
-  await page.click('a[href="#admin"]');
-  await page.waitForSelector('#adm-lock');
-  await page.click('#adm-lock');
-  await page.waitForSelector('#adm-form');
-  await page.click('[data-tab="settings"]');
-  check('locking hides the Admin row', !(await page.isVisible('a[href="#admin"]')));
+
+  // Meera turns backup on once approved; then the admin revokes it.
+  await pd.goto(URL);
+  await pd.waitForSelector('.notice:has-text("approved")');
+  check('an approved device is told on Today', true);
+  await pd.click('[data-act="goto-settings"]');
+  await pd.click('[data-act="bk-on"]');
+  await pd.click('[data-next="2"]');
+  const codeD = (await pd.textContent('#code')).replace(/\s/g, '');
+  await pd.click('[data-next="3"]');
+  await pd.fill('#last4', codeD.slice(-4));
+  await pd.click('[data-go]');
+  await sheetClosed(pd);
+  await pd.waitForSelector('.state.on');
+  await page.click('[data-refresh]');
+  await page.waitForSelector('.admrow:has-text("Meera") [data-ask]');
+  await page.click('.admrow:has-text("Meera") [data-ask]');
+  await page.click('.admrow:has-text("Meera") [data-revoke]');
+  await page.waitForSelector('.admrow:has-text("Meera") .tag.st-revoked');
+  await pd.click('[data-act="bk-sync"]');
+  await pd.waitForSelector('.state:has-text("Off")');
+  check('a revoked device is told why, and keeps its habits', (await pd.textContent('.err-t')).includes('turned off by the person who runs Tick') && (await pd.$$('.habit-row')).length === 2);
+  await D.ctx.close();
+  await page.click('[data-tab="today"]');
 } else {
-  ['backup needs an invite', 'backup turns on', 'device B opens the backup and sees the habits and ticks', 'unticks, notification ticks and habit deletes reach the other device', 'server stores no readable habits or ticks']
+  ['asking for backup and approving it', 'backup turns on', 'device B opens the backup and sees the habits and ticks', 'unticks, notification ticks and habit deletes reach the other device', 'server stores no readable habits or ticks', 'the Admin tab']
     .forEach(n => skip(`${n} (no backup API at ${URL}; run npm run dev)`));
 }
 
