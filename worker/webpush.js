@@ -23,14 +23,17 @@ export function validTimeZone(tz) {
   try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch { return false; }
 }
 
-// [{ t: 'HH:MM', days: [0–6] }], at most one per minute of the day that's used.
+// [{ t: 'HH:MM', days: [0–6], from?: 'YYYY-MM-DD' }], at most one per minute of the day that's
+// used. `from` is the first local date the slot is sent on (a reminder for something that only
+// falls due now and then); without it the slot is sent from the start.
 export function cleanSlots(slots) {
   if (!Array.isArray(slots) || !slots.length || slots.length > 24) return null;
   const out = [];
   for (const s of slots) {
     if (!s || typeof s.t !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(s.t)) return null;
     if (!Array.isArray(s.days) || !s.days.length || s.days.some(d => !Number.isInteger(d) || d < 0 || d > 6)) return null;
-    out.push({ t: s.t, days: [...new Set(s.days)].sort() });
+    if (s.from != null && (typeof s.from !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s.from))) return null;
+    out.push({ t: s.t, days: [...new Set(s.days)].sort(), ...(s.from && { from: s.from }) });
   }
   return out;
 }
@@ -45,12 +48,12 @@ export function localTime(tz, now) {
   return { date: `${p.year}-${p.month}-${p.day}`, minutes: Number(p.hour) * 60 + Number(p.minute), dow: DOW[p.weekday] };
 }
 
-// Slots to send now: due today, their time has come in the last `windowMin` minutes (so a late
+// Slots to send now: due today (and not before their `from` date), their time has come in the last `windowMin` minutes (so a late
 // or skipped cron run still sends), and not already sent today.
 export function dueSlots(slots, sent, local, windowMin = 30) {
   return slots.filter(s => {
     const m = Number(s.t.slice(0, 2)) * 60 + Number(s.t.slice(3));
-    return s.days.includes(local.dow) && local.minutes >= m && local.minutes < m + windowMin && sent[s.t] !== local.date;
+    return s.days.includes(local.dow) && (!s.from || local.date >= s.from) && local.minutes >= m && local.minutes < m + windowMin && sent[s.t] !== local.date;
   }).map(s => s.t);
 }
 

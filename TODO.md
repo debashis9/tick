@@ -19,8 +19,14 @@ tests, 111 browser checks), not committed or deployed yet: first section below._
 - [x] Calendar: its own stats (times done, last done, next due), a dot on the all-habits month
 - [x] Looked over on localhost, committed and pushed (2026-10-11)
 - [ ] Phone: Refresh to v7, add a "Less often" habit, check it shows under Occasional
-- [ ] Reminders for occasional habits: none yet. A push on the due date needs the Worker to know
-      dates, not just a time and weekdays
+- [x] Reminders for occasional habits (built 2026-10-11, `tick-v8`): a notification at the chosen
+      time on the due date and each day after until ticked. The Worker gets the due date with
+      the time, nothing else
+- [ ] Commit and push `tick-v8`, then on the phone: Refresh, give an occasional habit a reminder
+      a few minutes ahead with First due today, leave the app closed, check it arrives and
+      "Mark done" ticks it
+- [ ] "Mark done" on the notification doesn't tell the Worker the new due date until Tick is next
+      opened; until then the daily push still arrives and is closed silently
 - [ ] A device still on v6 shows an occasional habit as an every-day one until it refreshes
 
 ## Cloud backup rollout (do these in order, before pushing)

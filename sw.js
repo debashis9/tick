@@ -1,6 +1,6 @@
 // Cache-first app shell. Bump VERSION on every deploy: the browser only installs a new
 // service worker when this file's bytes change, and the app then offers "Refresh".
-const VERSION = 'tick-v7';
+const VERSION = 'tick-v8';
 
 const SHELL = [
   './',
@@ -108,6 +108,20 @@ const isV2 = db => db.objectStoreNames.contains('local');
 
 const isDone = (h, c) => !!c && (!h.goal || c.amount == null || c.amount >= h.goal.amount);
 
+// When an occasional habit ("every 3 months") is next due: one interval after the last day it
+// was done, or its first due date. The same rule as occasional() in js/stats.js, which this
+// classic script can't import.
+function nextDue(h, checks, today) {
+  let last = null;
+  for (const c of checks) if (c.habitId === h.id && c.date <= today && isDone(h, c) && (!last || c.date > last)) last = c.date;
+  if (!last) return h.schedule.start || h.createdOn;
+  const [y, m, d] = last.split('-').map(Number), { n, unit } = h.schedule;
+  if (unit === 'week') return dateKey(new Date(y, m - 1, d + 7 * n));
+  const mo = m - 1 + (unit === 'year' ? 12 * n : n);
+  return dateKey(new Date(y, mo, Math.min(d, new Date(y, mo + 1, 0).getDate())));
+}
+const daysBetween = (a, b) => Math.round((new Date(b + 'T00:00') - new Date(a + 'T00:00')) / 864e5);
+
 async function whatsDue(now) {
   const db = await openDB();
   try {
@@ -129,13 +143,15 @@ async function whatsDue(now) {
     const byKey = new Map(checks.map(c => [c.habitId + '|' + c.date, c]));
     const weekCount = h => checks.filter(c => c.habitId === h.id && week.has(c.date) && isDone(h, c)).length;
     const due = habits
-      .filter(h => !h.archivedOn && h.reminder && h.createdOn <= today && h.schedule.type !== 'every')
+      .filter(h => !h.archivedOn && h.reminder && h.createdOn <= today)
       .filter(h => Number(h.reminder.slice(0, 2)) * 60 + Number(h.reminder.slice(3)) <= mins)
       .filter(h => h.schedule.type !== 'days' || h.schedule.days.includes(now.getDay()))
       .filter(h => !isDone(h, byKey.get(h.id + '|' + today)))
       .filter(h => h.schedule.type !== 'weekly' || weekCount(h) < h.schedule.times)
+      .filter(h => h.schedule.type !== 'every' || nextDue(h, checks, today) <= today)
       .sort((a, b) => a.order - b.order)
-      .map(h => ({ h, entry: byKey.get(h.id + '|' + today), count: h.schedule.type === 'weekly' ? weekCount(h) : 0 }));
+      .map(h => ({ h, entry: byKey.get(h.id + '|' + today), count: h.schedule.type === 'weekly' ? weekCount(h) : 0,
+        late: h.schedule.type === 'every' ? daysBetween(nextDue(h, checks, today), today) : 0 }));
     await new Promise(resolve => { t.oncomplete = t.onerror = t.onabort = resolve; });
     const testAt = test?.value?.at ?? test?.at;
     return { due, today, test: !!testAt && now - testAt < 10 * 60e3 };
@@ -157,8 +173,9 @@ async function remind() {
     return;
   }
   if (due.length === 1) {
-    const { h, entry, count } = due[0];
-    const body = h.goal ? `${[`${entry?.amount || 0} of ${h.goal.amount}`, h.goal.unit].filter(Boolean).join(' ')} so far today.`
+    const { h, entry, count, late } = due[0];
+    const body = h.schedule.type === 'every' ? (late ? `Overdue by ${late} ${late === 1 ? 'day' : 'days'}.` : 'Due today.')
+      : h.goal ? `${[`${entry?.amount || 0} of ${h.goal.amount}`, h.goal.unit].filter(Boolean).join(' ')} so far today.`
       : h.schedule.type === 'weekly' ? `${count} of ${h.schedule.times} this week. Not done yet today.`
       : 'Not done yet today.';
     return self.registration.showNotification(`${h.icon} ${h.name}`, {

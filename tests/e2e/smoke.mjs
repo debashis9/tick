@@ -317,6 +317,28 @@ if (sw) {
     return ns.map(n => `${n.title} | ${n.body}`);
   });
   check('a push names the habit still to do', shown.length === 1 && shown[0].includes('Meditate') && shown[0].includes('Not done yet'), shown.join(' / '));
+  // An occasional habit reminds from the day it's due, says how late it is, and goes quiet once ticked.
+  const occ = await sw.evaluate(async ({ due, done }) => {
+    const put = async (store, rows) => { const db = await openDB(), t = db.transaction(store, 'readwrite'); rows.forEach(r => t.objectStore(store).put(r)); await new Promise(r => { t.oncomplete = r; }); db.close(); };
+    const hs = await (async () => { const db = await openDB(); const all = await req(db.transaction('habits').objectStore('habits').getAll()); db.close(); return all; })();
+    await put('habits', hs.filter(h => h.reminder).map(h => ({ ...h, reminder: null })));
+    const habit = { id: 'hocc', name: 'Monthly cleaning', icon: '🧹', color: 'teal', schedule: { type: 'every', n: 1, unit: 'month', days: [], start: due }, kinds: [], goal: null, reminder: '00:00', order: 99, createdOn: due, archivedOn: null, updatedAt: Date.now() };
+    const says = async () => { await remind(); const ns = await self.registration.getNotifications(); ns.forEach(n => n.close()); return ns.map(n => `${n.title} | ${n.body}`).join(' / '); };
+    await put('habits', [habit]);
+    const late = await says();
+    await put('checks', [{ habitId: 'hocc', date: done, at: Date.now(), updatedAt: Date.now() }]);
+    const afterDone = await says();
+    // Leave the database as it was for the checks that follow.
+    const db = await openDB(), t = db.transaction(['habits', 'checks'], 'readwrite');
+    t.objectStore('habits').delete('hocc');
+    t.objectStore('checks').delete(['hocc', done]);
+    hs.forEach(h => t.objectStore('habits').put(h));
+    await new Promise(r => { t.oncomplete = r; });
+    db.close();
+    return { late, afterDone };
+  }, { due: dayKey(3), done: dayKey(1) });
+  check('a push for an occasional habit says how overdue it is', occ.late.includes('Monthly cleaning') && occ.late.includes('Overdue by 3 days'), occ.late);
+  check('no push for an occasional habit that was done since', occ.afterDone === '', occ.afterDone);
 } else check('service worker available for the reminder check', false);
 
 // ---------- cloud backup ----------

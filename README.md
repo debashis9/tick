@@ -8,7 +8,8 @@ device. Habits can repeat every day, on some weekdays, or N times a week (any da
 reminder. Things you do less often (monthly cleaning, a declutter every 3 months, something once a
 year) repeat every N weeks, months or years, counted from the last time you ticked them: they show
 on Today under "Occasional" when due and wait there until ticked, the rest fold under "Later", and
-they stay out of the daily ring, runs and strength. Under "More options", a habit can also have a daily amount (20 pages, 30 minutes)
+they stay out of the daily ring, runs and strength. A reminder on one of these notifies on the day
+it's due and each day after until it's ticked. Under "More options", a habit can also have a daily amount (20 pages, 30 minutes)
 or kinds to pick from after ticking (Walk / Jog / Run). Both are optional; the habit's name
 may suggest one, but nothing is added without a tap. Press and hold a habit to edit it, or hold and drag to reorder.
 
@@ -180,14 +181,17 @@ A web app can't schedule its own notifications, so the Worker sends them:
 
 1. Turning on a reminder asks for notification permission and subscribes this device to push.
    `js/push.js` then posts the device's push address, the reminder times with their weekdays
-   and its time zone to `/api/push/subscribe`. Habit names and ticks are never sent. When no
+   and its time zone to `/api/push/subscribe`. A time used only by occasional habits also
+   carries the date the first of them is next due, and the Worker sends nothing before it; the
+   date moves on each time one is ticked. Habit names and ticks are never sent. When no
    habit has a reminder any more, it calls `/api/push/unsubscribe`, which deletes the record.
 2. The Worker keeps those records in a Durable Object (SQLite). A cron runs every minute and
    sends an **empty** push (no payload, so nothing to encrypt) to each device whose reminder
    time has come in its own time zone, once per day per time.
 3. On the phone, `sw.js` wakes up, reads the habits from IndexedDB and shows what's still to
    do ("📖 Read a book · Not done yet today", with a **Mark done** button on Android and
-   desktop). If everything is already done it shows nothing.
+   desktop). An occasional habit says "Due today" or "Overdue by 3 days". If everything is
+   already done it shows nothing.
 
 Pushes are signed with a VAPID key pair. The public key is in `js/push.js`; the private key is
 the Worker secret `VAPID_JWK` (a JSON Web Key), and a local copy is in `.dev.vars` (git-ignored,

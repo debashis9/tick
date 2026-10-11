@@ -116,7 +116,7 @@ export function openEditor(id) {
     : { name: '', icon: '💧', color: COLORS.find(c => !used.includes(c)) || 'green', type: 'daily', days: [1, 3, 5], times: 3,
       n: 1, per: 'month', start: '', goal: '', unit: '', kinds: '', reminder: null };
   let err = '', confirmDelete = false, busy = false, more = !!(h && (h.goal || h.kinds.length));
-  // Occasional: no reminder and no daily amount. Its first due date can be set until it has been done once.
+  // Occasional: no daily amount. Its first due date can be set until it has been done once.
   const every = () => draft.type === 'every';
   const started = !!h && hasEntries(h.id);
   const moreSub = () => {
@@ -160,10 +160,11 @@ export function openEditor(id) {
     ${every() && !started ? `<div class="field"><label class="flabel" for="hstart">First due</label>
       <input class="text-in time-in" id="hstart" type="date" value="${esc(draft.start || todayKey())}"></div>` : ''}
     ${every() && started && isOccasional(h) && !scheduleChanged() ? `<p class="fnote">Next due ${dayText(occasionalOf(h).due)}, counted from the last time you ticked it.</p>` : ''}
-    ${every() ? '' : `<div class="field"><span class="flabel">Reminder</span>
+    <div class="field"><span class="flabel">Reminder</span>
       <div class="remind"><button class="switch" type="button" role="switch" data-remind aria-checked="${!!draft.reminder}" aria-label="Remind me"><i></i></button>
         ${draft.reminder ? `<input class="text-in time-in" id="hrem" type="time" value="${draft.reminder}" aria-label="Reminder time">` : '<span class="fnote">Off</span>'}</div>
-      ${draft.reminder ? '<p class="fnote">A notification at this time on days the habit is due, unless it\'s already done.</p>' : ''}</div>`}
+      ${draft.reminder ? `<p class="fnote">${every() ? "A notification at this time on the day it's due, and each day after until you tick it."
+        : "A notification at this time on days the habit is due, unless it's already done."}</p>` : ''}</div>
     <div class="more-opts">
       <button class="more-toggle" type="button" data-more aria-expanded="${more}">
         <span class="rt"><span class="rtitle">More options</span><span class="rs" id="more-sub">${esc(moreSub())}</span></span>${more ? ICON.up : ICON.down}</button>
@@ -218,7 +219,7 @@ export function openEditor(id) {
       // Ask for notification permission straight from the tap: browsers only allow it then.
       const problem = await enableReminders();
       err = problem || '';
-      if (!problem) draft.reminder = '20:00';
+      if (!problem) draft.reminder = every() ? '09:00' : '20:00';
       return sheet.setBody(body());
     }
     if (busy) return;
@@ -241,7 +242,7 @@ export function openEditor(id) {
         const fields = {
           name: draft.name, icon: draft.icon, color: draft.color, schedule, kinds,
           goal: amount ? { amount: Math.round(amount * 100) / 100, unit: draft.unit.trim().slice(0, 16) } : null,
-          reminder: every() ? null : draft.reminder,
+          reminder: draft.reminder,
         };
         if (h) await updateHabit(h, fields); else await addHabit(fields);
         close(); render();

@@ -38,6 +38,15 @@ test('a slot is due from its minute for 30 minutes, once per day, on its weekday
   assert.deepEqual(dueSlots(slots, {}, at(20 * 60, 4)), []); // Thursday
 });
 
+test('a slot with a from date stays quiet until that date, then is due every day', () => {
+  const slots = [{ t: '09:00', days: [0, 1, 2, 3, 4, 5, 6], from: '2026-11-11' }];
+  const at = date => ({ date, minutes: 9 * 60, dow: 3 });
+  assert.deepEqual(dueSlots(slots, {}, at('2026-11-10')), []);
+  assert.deepEqual(dueSlots(slots, {}, at('2026-11-11')), ['09:00']);
+  assert.deepEqual(dueSlots(slots, { '09:00': '2026-11-11' }, at('2026-11-12')), ['09:00']);
+  assert.deepEqual(dueSlots(slots, {}, at('2027-01-02')), ['09:00']);
+});
+
 test('input checks', () => {
   assert.ok(validEndpoint('https://fcm.googleapis.com/fcm/send/x'));
   assert.ok(validEndpoint('https://web.push.apple.com/abc'));
@@ -48,6 +57,9 @@ test('input checks', () => {
   assert.ok(validTimeZone('Asia/Kolkata'));
   assert.ok(!validTimeZone('Mars/Olympus'));
   assert.deepEqual(cleanSlots([{ t: '07:05', days: [3, 1, 1] }]), [{ t: '07:05', days: [1, 3] }]);
+  assert.deepEqual(cleanSlots([{ t: '09:00', days: [1], from: '2026-11-11' }]), [{ t: '09:00', days: [1], from: '2026-11-11' }]);
+  assert.equal(cleanSlots([{ t: '09:00', days: [1], from: 'tomorrow' }]), null);
+  assert.equal(cleanSlots([{ t: '09:00', days: [1], from: 20261111 }]), null);
   assert.equal(cleanSlots([{ t: '24:00', days: [1] }]), null);
   assert.equal(cleanSlots([{ t: '07:00', days: [] }]), null);
   assert.equal(cleanSlots([]), null);

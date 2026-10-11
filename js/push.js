@@ -1,9 +1,11 @@
 // Reminders. A reminder is a notification, sent by the Tick Worker as an empty push at the
 // chosen time. The Worker only keeps this device's push address, the reminder times with their
-// weekdays, and the time zone. It never learns which habit a reminder is for or whether it
+// weekdays (and, for an occasional habit, the date it's next due), and the time zone. It never learns which habit a reminder is for or whether it
 // was ticked: the service worker (sw.js) reads that from this device when the push arrives.
 
-import { store, active, onLocalChange, onExternalChange, saveSettings } from './store.js';
+import { store, active, doneDates, onLocalChange, onExternalChange, saveSettings } from './store.js';
+import { isOccasional, occasional } from './stats.js';
+import { todayKey } from './dates.js';
 import { markPushTest } from './db.js';
 
 // The public half of the Worker's VAPID key pair (the private half is a Worker secret).
@@ -53,15 +55,24 @@ export async function enableReminders() {
   return null;
 }
 
-// One entry per reminder time: the weekdays that time is used on.
+// One entry per reminder time: the weekdays that time is used on. An occasional habit reminds
+// every day from the date it's due until it's ticked, so a time used only by occasional habits
+// also carries `from`, the first date one of them is due: the Worker sends nothing before it.
+// (Ticking moves that date on, and this runs again after every change.)
 function slots() {
-  const m = new Map();
+  const m = new Map(), tKey = todayKey();
   for (const h of active()) {
-    if (!h.reminder || h.schedule.type === 'every') continue;   // occasional habits have no reminder yet
-    const days = h.schedule.type === 'days' ? h.schedule.days : [0, 1, 2, 3, 4, 5, 6];
-    m.set(h.reminder, new Set([...(m.get(h.reminder) || []), ...days]));
+    if (!h.reminder) continue;
+    const s = m.get(h.reminder) || { days: new Set(), from: null, always: false };
+    (h.schedule.type === 'days' ? h.schedule.days : [0, 1, 2, 3, 4, 5, 6]).forEach(d => s.days.add(d));
+    if (isOccasional(h)) {
+      const due = occasional(h, doneDates(h.id), tKey).due;
+      if (!s.from || due < s.from) s.from = due;
+    } else s.always = true;
+    m.set(h.reminder, s);
   }
-  return [...m].sort(([a], [b]) => a < b ? -1 : 1).map(([t, d]) => ({ t, days: [...d].sort() }));
+  return [...m].sort(([a], [b]) => a < b ? -1 : 1)
+    .map(([t, s]) => ({ t, days: [...s.days].sort(), ...(!s.always && s.from && { from: s.from }) }));
 }
 
 async function post(path, body) {
