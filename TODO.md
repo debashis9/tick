@@ -1,19 +1,18 @@
 # Tick — to do
 
-_Last updated 2026-10-06. Tick is live on Cloudflare (`tick-v5`) and installed on the Android
-phone. Asking for cloud backup and the Admin tab (`tick-v6`) are built and tested locally (77 unit
-tests, 111 browser checks), not committed or deployed yet: first section below._
+_Last updated 2026-10-11. Tick is live on Cloudflare (`tick-v8`) and installed on the Android
+phone. Occasional habits and their reminders are in; the open checks are in the sections below._
 
 ## Asking for cloud backup and the Admin tab (built 2026-10-06, as in Sol; do these in order)
 - [x] `npx wrangler d1 migrations apply tick --remote` (migration 0002: requests, owner names, admin backups), 2026-10-06. (A first try failed with Cloudflare error 7403 while the login was renewing; the retry worked.)
-- [ ] Commit and push (`tick-v6`)
+- [x] Commit and push (`tick-v6`): commit `3fc9725`, live before v7
 - [ ] Phone: Refresh. Settings → Cloud backup now offers *Ask for cloud backup* instead of failing at the end
 - [ ] Phone: open the link from `node tools/admin-link.mjs https://tick.debashis9.workers.dev`, turn on backup, then Admin tab → *Make my backup the admin* → *Forget the admin key on this device*. The Admin tab stays
 - [ ] Laptop: open the backup with the recovery code; the Admin tab appears there too, with nothing typed
 - [ ] A second person: *Ask for cloud backup*; the phone shows a badge on Admin and a note on Today; approve; they turn backup on
 - [ ] Pie still uses the key-only admin page; bring it in line later if wanted
 
-## Occasional habits (built 2026-10-11, `tick-v7`)
+## Occasional habits (built 2026-10-11, `tick-v7`; reminders in `tick-v8`)
 - [x] "Less often" in the editor: every N weeks, months or years, with a first due date
 - [x] Today: an "Occasional" section for what's due or overdue, and a folded "Later" list
 - [x] Calendar: its own stats (times done, last done, next due), a dot on the all-habits month
@@ -22,9 +21,9 @@ tests, 111 browser checks), not committed or deployed yet: first section below._
 - [x] Reminders for occasional habits (built 2026-10-11, `tick-v8`): a notification at the chosen
       time on the due date and each day after until ticked. The Worker gets the due date with
       the time, nothing else
-- [ ] Commit and push `tick-v8`, then on the phone: Refresh, give an occasional habit a reminder
-      a few minutes ahead with First due today, leave the app closed, check it arrives and
-      "Mark done" ticks it
+- [x] Committed, pushed and live as `tick-v8` (2026-10-11)
+- [x] Phone: an occasional habit's reminder arrived (Android, 2026-10-11)
+- [ ] Phone: check "Mark done" on that notification ticks it
 - [ ] "Mark done" on the notification doesn't tell the Worker the new due date until Tick is next
       opened; until then the daily push still arrives and is closed silently
 - [ ] A device still on v6 shows an occasional habit as an every-day one until it refreshes
