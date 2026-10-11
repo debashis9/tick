@@ -1,6 +1,6 @@
 // Cache-first app shell. Bump VERSION on every deploy: the browser only installs a new
 // service worker when this file's bytes change, and the app then offers "Refresh".
-const VERSION = 'tick-v6';
+const VERSION = 'tick-v7';
 
 const SHELL = [
   './',
@@ -129,7 +129,7 @@ async function whatsDue(now) {
     const byKey = new Map(checks.map(c => [c.habitId + '|' + c.date, c]));
     const weekCount = h => checks.filter(c => c.habitId === h.id && week.has(c.date) && isDone(h, c)).length;
     const due = habits
-      .filter(h => !h.archivedOn && h.reminder && h.createdOn <= today)
+      .filter(h => !h.archivedOn && h.reminder && h.createdOn <= today && h.schedule.type !== 'every')
       .filter(h => Number(h.reminder.slice(0, 2)) * 60 + Number(h.reminder.slice(3)) <= mins)
       .filter(h => h.schedule.type !== 'days' || h.schedule.days.includes(now.getDay()))
       .filter(h => !isDone(h, byKey.get(h.id + '|' + today)))

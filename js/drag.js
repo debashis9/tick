@@ -92,7 +92,8 @@ export function bindDrag(root, { onHold, onDrop }) {
       return;
     }
     if (!s.dragging) {
-      if (Math.abs(e.clientY - s.y0) < SLOP) return;
+      // A list in an order of its own (data-fixed) can't be rearranged; holding still edits.
+      if (Math.abs(e.clientY - s.y0) < SLOP || s.card.closest('[data-fixed]')) return;
       startDrag();
     }
     update();

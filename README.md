@@ -5,7 +5,10 @@ Tap a habit to tick it off. The Calendar tab shows your history by week, month o
 
 Today greets you by name ("Good morning, Debashis"); the name is asked once and stays on the
 device. Habits can repeat every day, on some weekdays, or N times a week (any days), and can have a
-reminder. Under "More options", a habit can also have a daily amount (20 pages, 30 minutes)
+reminder. Things you do less often (monthly cleaning, a declutter every 3 months, something once a
+year) repeat every N weeks, months or years, counted from the last time you ticked them: they show
+on Today under "Occasional" when due and wait there until ticked, the rest fold under "Later", and
+they stay out of the daily ring, runs and strength. Under "More options", a habit can also have a daily amount (20 pages, 30 minutes)
 or kinds to pick from after ticking (Walk / Jog / Run). Both are optional; the habit's name
 may suggest one, but nothing is added without a tap. Press and hold a habit to edit it, or hold and drag to reorder.
 

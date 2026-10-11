@@ -1,7 +1,7 @@
 import { todayKey, parse, addDays, key, greeting, DAY_LONG, DAY_SHORT, MONTHS } from '../dates.js';
-import { isDue, dayProgress } from '../stats.js';
+import { isDue, dayProgress, isOccasional } from '../stats.js';
 import { store, has, active, byId, saveSettings, tickCount, reorder } from '../store.js';
-import { view, $, esc, ws, cardHTML, metaText, ringSVG, toggle, storageError, daysSince, appVersion } from '../ui.js';
+import { view, $, esc, ws, ICON, cardHTML, metaText, ringSVG, toggle, storageError, daysSince, appVersion, occasionalOn, occasionalOf, dayText } from '../ui.js';
 import { openEditor, openAmountSheet, pickKind } from '../sheets.js';
 import { exportBackup } from '../backup.js';
 import { bindDrag } from '../drag.js';
@@ -61,14 +61,25 @@ const welcomeHTML = () => `<form class="welcome" id="name-form" autocomplete="of
     <p class="fnote">Tick uses it to say hello. It stays on this device. <button type="button" class="linkbtn" data-act="skip-name">Not now</button></p>
   </form>`;
 
+// Occasional habits that aren't due yet, folded away under one line that says what comes next.
+function laterHTML(later, k) {
+  const next = later[0];
+  return `<div class="more-opts later">
+    <button class="more-toggle" type="button" data-act="later" aria-expanded="${view.later}">
+      <span class="rt"><span class="rtitle">Later · ${later.length}</span>
+      <span class="rs">Next: ${esc(next.icon)} ${esc(next.name)}, ${dayText(occasionalOf(next, k).due)}</span></span>${view.later ? ICON.up : ICON.down}</button>
+    ${view.later ? `<div class="list" data-fixed>${later.map(h => cardHTML(h, k, true)).join('')}</div>` : ''}</div>`;
+}
+
 export function renderToday() {
   const tKey = todayKey();
   if (view.selDate > tKey) view.selDate = tKey;
   const k = view.selDate, d = parse(k), isToday = k === tKey;
   const p = dayProgress(active(), k, has, tKey, ws());
-  const list = active().filter(h => k >= h.createdOn);
+  const list = active().filter(h => k >= h.createdOn && !isOccasional(h));
   const due = list.filter(h => isDue(h, d, has, tKey, ws()));
   const rest = list.filter(h => !due.includes(h));
+  const occ = occasionalOn(k), occLeft = occ.now.filter(h => !has(h.id, k)).length;
   const name = store.settings.name;
   el().innerHTML = `
     ${isToday && name ? `<p class="hello">${greeting()}, ${esc(name)}</p>` : ''}
@@ -84,9 +95,11 @@ export function renderToday() {
     ${isToday && !name && !store.settings.nameAsked ? welcomeHTML() : ''}
     ${isToday ? bannerHTML() : `<div class="notice"><span>You're editing a past day.</span><button type="button" data-act="today">Back to today</button></div>`}
     ${active().length ? '' : `<div class="empty"><h2>No habits yet</h2><p>Add the first thing you want to keep doing.</p></div>`}
-    ${active().length && !list.length ? `<div class="empty"><p>None of your habits had started by this day.</p></div>` : ''}
+    ${active().length && !list.length && !occ.now.length && !occ.later.length ? `<div class="empty"><p>None of your habits had started by this day.</p></div>` : ''}
     ${due.length ? `<div class="list">${due.map(h => cardHTML(h, k)).join('')}</div>` : ''}
+    ${occ.now.length ? `<div class="sec">Occasional${occLeft ? ` · ${occLeft} due` : ''}</div><div class="list">${occ.now.map(h => cardHTML(h, k)).join('')}</div>` : ''}
     ${rest.length ? `<div class="sec">Not due ${isToday ? 'today' : 'that day'}</div><div class="list">${rest.map(h => cardHTML(h, k, true)).join('')}</div>` : ''}
+    ${occ.later.length ? laterHTML(occ.later, k) : ''}
     <button class="add" type="button" data-act="new"><span aria-hidden="true">+</span> New habit</button>
     ${active().length ? '<p class="hint">Tap a habit to tick it. Press and hold to edit it, or hold and drag to move it.</p>' : ''}
     ${appVersion.text ? `<p class="version" id="version">Tick ${esc(appVersion.text)}</p>` : ''}`;
@@ -135,6 +148,7 @@ export function bindToday() {
     const act = t.closest('[data-act]')?.dataset.act;
     if (act === 'today') { view.selDate = todayKey(); return renderToday(); }
     if (act === 'new') return openEditor(null);
+    if (act === 'later') { view.later = !view.later; return renderToday(); }
     if (act === 'goto-admin' || act === 'goto-settings') return document.querySelector(`.nav [data-tab="${act.slice(5)}"]`)?.click();
     if (act === 'skip-name') return saveSettings({ nameAsked: true }).then(renderToday, storageError);
     if (act === 'dismiss-install') return saveSettings({ installTipDismissed: true }).then(renderToday, storageError);
@@ -147,8 +161,8 @@ export function bindToday() {
     if (kind) return pickKind(h, card.dataset.date, kind.dataset.kind).then(renderToday);
     if (h.goal) return openAmountSheet(h, card.dataset.date);
     const done = toggle(h, card.dataset.date);
-    // Kind chips appear, or the week's count moves the habit between sections: redraw.
-    if (h.kinds.length || h.schedule.type === 'weekly') {
+    // Kind chips appear, or the tick moves the habit between sections: redraw.
+    if (h.kinds.length || h.schedule.type === 'weekly' || isOccasional(h)) {
       renderToday();
       if (done) el().querySelector(`.card[data-id="${h.id}"]`)?.classList.add('pop');
       return;

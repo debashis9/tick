@@ -18,6 +18,12 @@ export function parse(k) {
 
 export const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 
+// The same day n months on. The 31st lands on the last day of a shorter month.
+export function addMonths(d, n) {
+  const last = new Date(d.getFullYear(), d.getMonth() + n + 1, 0).getDate();
+  return new Date(d.getFullYear(), d.getMonth() + n, Math.min(d.getDate(), last));
+}
+
 export function today(now = new Date()) {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }

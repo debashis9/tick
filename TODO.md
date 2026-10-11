@@ -13,6 +13,16 @@ tests, 111 browser checks), not committed or deployed yet: first section below._
 - [ ] A second person: *Ask for cloud backup*; the phone shows a badge on Admin and a note on Today; approve; they turn backup on
 - [ ] Pie still uses the key-only admin page; bring it in line later if wanted
 
+## Occasional habits (built 2026-10-11, `tick-v7`)
+- [x] "Less often" in the editor: every N weeks, months or years, with a first due date
+- [x] Today: an "Occasional" section for what's due or overdue, and a folded "Later" list
+- [x] Calendar: its own stats (times done, last done, next due), a dot on the all-habits month
+- [x] Looked over on localhost, committed and pushed (2026-10-11)
+- [ ] Phone: Refresh to v7, add a "Less often" habit, check it shows under Occasional
+- [ ] Reminders for occasional habits: none yet. A push on the due date needs the Worker to know
+      dates, not just a time and weekdays
+- [ ] A device still on v6 shows an occasional habit as an every-day one until it refreshes
+
 ## Cloud backup rollout (do these in order, before pushing)
 - [x] `npx wrangler d1 create tick`, paste the `database_id` into `wrangler.jsonc` (done 2026-10-05, region APAC)
 - [x] `npx wrangler d1 migrations apply tick --remote`

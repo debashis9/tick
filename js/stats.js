@@ -2,9 +2,32 @@
 // so they can be unit-tested in Node. `ws` is the first day of the week (0 = Sunday); it
 // only matters for "N times a week" habits, which are judged per week.
 
-import { key, parse, addDays, startOfWeek } from './dates.js';
+import { key, parse, addDays, addMonths, startOfWeek } from './dates.js';
 
 export const isWeekly = h => h.schedule.type === 'weekly';
+
+// Occasional habits ("every 3 months") aren't judged day by day: no missed days, no runs, and
+// they stay out of each day's progress. They only have a date they next fall due.
+export const UNITS = ['week', 'month', 'year'];
+export const MAX_EVERY = 12;
+export const isOccasional = h => h.schedule.type === 'every';
+
+export const addInterval = (d, n, unit) => unit === 'week' ? addDays(d, 7 * n) : addMonths(d, unit === 'year' ? 12 * n : n);
+
+// Where an occasional habit stands on day k. `dates` are the days it was done, oldest first.
+// It falls due one interval after the last time it was done, so doing it late pushes the next
+// one out; until it has been done once, it's due on its first due date. Returns
+// { done (on k), due (the date it is, was or will next be due), late (days overdue), now (belongs
+// on that day's list: done, due or overdue), last (the last time it was done, up to k) }.
+export function occasional(h, dates, k) {
+  let last = null;
+  for (const x of dates) { if (x > k) break; last = x; }
+  const { n, unit, start } = h.schedule;
+  const due = last ? key(addInterval(parse(last), n, unit)) : start || h.createdOn;
+  const done = last === k;
+  const late = !done && due < k ? Math.round((parse(k) - parse(due)) / 864e5) : 0;
+  return { done, due, late, now: done || due <= k, last };
+}
 
 // Could the habit be done on this day? Weekly habits can be done on any day.
 export function isScheduled(h, d) {
@@ -28,6 +51,7 @@ export function dayState(h, d, has, tKey, ws = 1) {
   if (k > tKey) return 'future';
   if (k < h.createdOn) return 'before';
   if (has(h.id, k)) return 'done';
+  if (isOccasional(h)) return 'off';
   if (isWeekly(h)) {
     if (weekCount(h, d, has, ws) >= h.schedule.times) return 'off';
     if (k === tKey) return 'pending';
@@ -42,6 +66,7 @@ export function dayState(h, d, has, tKey, ws = 1) {
 // Counts toward that day's progress: scheduled days, and for weekly habits the days that were
 // done, are still needed today, or belong to a week that fell short.
 export function isDue(h, d, has, tKey, ws = 1) {
+  if (isOccasional(h)) return false;
   if (!isWeekly(h)) return isScheduled(h, d);
   const s = dayState(h, d, has, tKey, ws);
   return s === 'done' || s === 'pending' || s === 'missed';
@@ -102,6 +127,7 @@ function weeklyStats(h, has, tKey, ws) {
 // misses (only unscheduled days), 'dash' if it has exactly one miss (never miss twice),
 // null otherwise. Drives the connectors in the month chain view.
 export function bridge(h, d, has, tKey, ws = 1) {
+  if (isOccasional(h)) return null;
   let miss = 0, x = d, sx;
   for (;;) {
     sx = dayState(h, x, has, tKey, ws);

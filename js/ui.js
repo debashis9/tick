@@ -1,8 +1,8 @@
 // Shared UI: view state, re-render hook, small templates, toast and bottom sheets.
 
-import { todayKey, parse, orderedDays, DAY_SHORT } from './dates.js';
-import { habitStats, isWeekly, weekCount } from './stats.js';
-import { store, has, entry, hasEntries, setCheck, setEntry } from './store.js';
+import { todayKey, parse, orderedDays, DAY_SHORT, MON_SHORT } from './dates.js';
+import { habitStats, isWeekly, weekCount, isOccasional, occasional } from './stats.js';
+import { store, has, entry, hasEntries, active, doneDates, setCheck, setEntry } from './store.js';
 
 export const ws = () => store.settings.weekStart;
 
@@ -32,6 +32,7 @@ export const view = {
   tab: 'today',
   selDate: todayKey(),
   cal: { zoom: 'month', filter: 'all', month: null, weekOf: null },
+  later: false,   // Today's "Later" list of occasional habits is open
 };
 
 let renderFn = () => {};
@@ -67,16 +68,48 @@ export function ringSVG(size, sw, frac, cls = '') {
 
 const timesText = n => n === 1 ? 'Once a week' : n === 2 ? 'Twice a week' : `${n} times a week`;
 
+export const everyText = (n, unit) => n === 1 ? `Every ${unit}` : `Every ${n} ${unit}s`;
+
 export const scheduleText = h => h.schedule.type === 'daily' ? 'Every day'
+  : isOccasional(h) ? everyText(h.schedule.n, h.schedule.unit)
   : isWeekly(h) ? timesText(h.schedule.times)
   : orderedDays(ws()).filter(x => h.schedule.days.includes(x)).map(x => DAY_SHORT[x]).join(', ');
 
 export const fmtNum = n => Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
 export const amountText = (h, n) => `${fmtNum(n)} ${h.goal.unit}`.trim();
 
+// '3 Nov', with the year when it isn't this one.
+export function dayText(k) {
+  const d = parse(k);
+  return `${d.getDate()} ${MON_SHORT[d.getMonth()]}${k.slice(0, 4) === todayKey().slice(0, 4) ? '' : ' ' + d.getFullYear()}`;
+}
+
+export const occasionalOf = (h, k = todayKey()) => occasional(h, doneDates(h.id), k);
+
+// The occasional habits on day k: the ones for that day's list (due, overdue, or done that
+// day), and the rest, soonest first.
+export function occasionalOn(k) {
+  const now = [], later = [];
+  for (const h of active()) {
+    if (!isOccasional(h) || k < h.createdOn) continue;
+    const o = occasionalOf(h, k);
+    (o.now ? now : later).push({ h, due: o.due });
+  }
+  later.sort((a, b) => a.due < b.due ? -1 : a.due > b.due ? 1 : 0);
+  return { now: now.map(x => x.h), later: later.map(x => x.h) };
+}
+
+function occasionalText(h, k) {
+  const o = occasionalOf(h, k), every = scheduleText(h).toLowerCase();
+  if (o.done) return `Done · next due ${dayText(o.due)}`;
+  if (o.late) return `${o.late < 60 ? `Overdue by ${plural(o.late, 'day')}` : `Overdue since ${dayText(o.due)}`} · ${every}`;
+  return `Due ${o.due === k ? (k === todayKey() ? 'today' : 'this day') : dayText(o.due)} · ${every}`;
+}
+
 // The line under a habit's name for day k: progress toward that day's amount or the week's
-// target, then the run or strength.
+// target, then the run or strength. An occasional habit says when it's due.
 export function metaText(h, k = todayKey()) {
+  if (isOccasional(h)) return occasionalText(h, k);
   const st = habitStats(h, has, todayKey(), ws());
   const parts = [];
   if (h.goal) parts.push(`${fmtNum(entry(h.id, k)?.amount || 0)} / ${amountText(h, h.goal.amount)}`);
@@ -101,10 +134,11 @@ function kindsHTML(h, k) {
 export function cardHTML(h, k, off = false) {
   const done = has(h.id, k);
   const part = h.goal && !done ? Math.min(1, (entry(h.id, k)?.amount || 0) / h.goal.amount) : 0;
-  return `<div class="card${done ? ' done' : ''}${off ? ' off' : ''}${h.goal ? ' qty' : ''}" role="button" tabindex="0" aria-pressed="${done}"
+  const occ = isOccasional(h), late = occ && occasionalOf(h, k).late > 0;
+  return `<div class="card${done ? ' done' : ''}${off ? ' off' : ''}${h.goal ? ' qty' : ''}${late ? ' late' : ''}" role="button" tabindex="0" aria-pressed="${done}"
     data-id="${h.id}" data-date="${k}" style="--c:var(--h-${h.color})">
     <div class="ico" aria-hidden="true">${esc(h.icon)}</div>
-    <div class="txt"><div class="name">${esc(h.name)}</div><div class="meta">${off && !done ? offText(h, k) : metaText(h, k)}</div>
+    <div class="txt"><div class="name">${esc(h.name)}</div><div class="meta">${off && !done && !occ ? offText(h, k) : metaText(h, k)}</div>
       ${done && h.kinds.length ? kindsHTML(h, k) : ''}</div>
     <button class="more" type="button" data-edit="${h.id}" aria-label="Edit ${esc(h.name)}">${ICON.dots}</button>
     <div class="chk${part ? ' part' : ''}" aria-hidden="true" style="--p:${part}">${ICON.check}</div>

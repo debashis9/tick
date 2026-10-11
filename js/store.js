@@ -9,6 +9,7 @@
 import * as db from './db.js';
 import * as rec from './records.js';
 import { todayKey, isValidKey } from './dates.js';
+import { UNITS, MAX_EVERY } from './stats.js';
 
 export const COLORS = ['green', 'blue', 'violet', 'pink', 'orange', 'amber', 'teal', 'slate'];
 export const ICONS = ['🏃', '📖', '🧘', '💧', '💪', '🥗', '✍️', '🎸', '🛌', '🌱', '💊', '🧹', '📵', '☀️', '🧠', '🚴'];
@@ -41,6 +42,8 @@ let state = rec.newState();
 
 // A habit: { id, name, icon, color, schedule, kinds, goal, reminder, order, createdOn, archivedOn, updatedAt }
 //   schedule: { type: 'daily' } | { type: 'days', days: [0–6] } | { type: 'weekly', times: 1–6 }
+//             | { type: 'every', n: 1–12, unit: 'week' | 'month' | 'year', start: first due date }
+//             (occasional: due again n units after it was last done; see stats.js)
 //   kinds:    [] or e.g. ['Walk', 'Jog', 'Run']: optional, picked after ticking
 //   goal:     null or { amount: 20, unit: 'pages' }: the day is done once the amount is reached
 //   reminder: null or 'HH:MM'. Stays on this device; the rest of the habit syncs.
@@ -61,6 +64,8 @@ export const has = (id, k) => {
   const e = store.entries.get(ck(id, k));
   return !!e && isDoneEntry(byId(id), e);
 };
+// The days a habit was done, oldest first.
+export const doneDates = id => [...store.entries.values()].filter(c => c.habitId === id && has(id, c.date)).map(c => c.date).sort();
 export const hasEntries = id => { for (const c of store.entries.keys()) if (c.startsWith(id + '|')) return true; return false; };
 // A check whose habit was deleted on another device is ignored: not counted and not exported.
 const liveChecks = () => [...store.entries.values()].filter(c => byId(c.habitId));
@@ -272,6 +277,10 @@ const cleanAmount = n => Number.isFinite(n) && n >= 0 && n <= 1e6 ? Math.round(n
 const cleanStamp = n => Number.isSafeInteger(n) && n > 0 ? { updatedAt: n } : {};
 
 function cleanSchedule(s) {
+  if (s?.type === 'every') {
+    if (!Number.isInteger(s.n) || s.n < 1 || s.n > MAX_EVERY || !UNITS.includes(s.unit)) return null;
+    return { type: 'every', n: s.n, unit: s.unit, days: [], ...(isValidKey(s.start) && { start: s.start }) };
+  }
   if (s?.type === 'weekly') {
     return Number.isInteger(s.times) && s.times >= 1 && s.times <= 6 ? { type: 'weekly', times: s.times, days: [] } : null;
   }

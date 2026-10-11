@@ -1,7 +1,7 @@
 import { todayKey, key, parse, addDays, weekIdx, startOfWeek, orderedDays, DAY_SHORT, DAY_LONG, MONTHS, MON_SHORT } from '../dates.js';
-import { isDue, isWeekly, dayState, habitStats, bridge, rangeRate } from '../stats.js';
-import { store, has, active, byId } from '../store.js';
-import { view, $, ws, esc, cap, plural, ICON, stateLabel, toggle, monthOf, amountText } from '../ui.js';
+import { isDue, isWeekly, isOccasional, dayState, habitStats, bridge, rangeRate } from '../stats.js';
+import { store, has, active, byId, doneDates } from '../store.js';
+import { view, $, ws, esc, cap, plural, ICON, stateLabel, toggle, monthOf, amountText, occasionalOf, dayText, scheduleText } from '../ui.js';
 import { openDaySheet } from '../sheets.js';
 
 const el = () => $('#view-calendar');
@@ -47,14 +47,16 @@ function monthSingleHTML(h, tKey) {
     cells += `<button class="${cls}" type="button" data-h="${h.id}" data-date="${k}" ${dis ? 'disabled' : ''}
       aria-label="${DAY_LONG[d.getDay()]} ${day} ${MONTHS[mo]}: ${esc(h.name)}, ${stateLabel[s]}">${inner}<span class="num">${day}</span></button>`;
   }
-  const summary = isWeekly(h)
+  const occ = isOccasional(h);
+  const summary = occ ? `<p class="summary">${doneN ? `Done on <b>${doneN}</b> ${doneN === 1 ? 'day' : 'days'} this month.` : 'Not done this month.'} Tap a day to mark when you did it.</p>`
+    : isWeekly(h)
     ? `<p class="summary">Done on <b>${doneN}</b> ${doneN === 1 ? 'day' : 'days'} this month. Goal: ${h.schedule.times} a week, any days.</p>`
     : dueN
     ? `<p class="summary"><b>${doneN}</b> of ${plural(dueN, 'due day')} done · longest run this month <b>${bestRun}</b></p>`
     : '<p class="summary">No due days this month yet.</p>';
   return `<div class="panel" style="--c:var(--h-${h.color})">${monthHead(tKey)}<div class="mgrid">${cells}</div>${summary}</div>
-    <div class="legend" style="--c:var(--h-${h.color})"><span><i class="lg done"></i>Done</span><span><i class="lg missed"></i>${isWeekly(h) ? 'Week fell short' : 'Missed'}</span>
-    <span><i class="lg dash"></i>One miss between done days</span><span><i class="lg off"></i>${isWeekly(h) ? 'Not needed' : 'Not scheduled'}</span></div>`;
+    <div class="legend" style="--c:var(--h-${h.color})"><span><i class="lg done"></i>Done</span>${occ ? '' : `<span><i class="lg missed"></i>${isWeekly(h) ? 'Week fell short' : 'Missed'}</span>
+    <span><i class="lg dash"></i>One miss between done days</span><span><i class="lg off"></i>${isWeekly(h) ? 'Not needed' : 'Not scheduled'}</span>`}</div>`;
 }
 
 // All habits: each day is a ring with one slice per habit that was due.
@@ -62,7 +64,8 @@ function monthSingleHTML(h, tKey) {
 function monthAllHTML(tKey) {
   const m0 = view.cal.month, y = m0.getFullYear(), mo = m0.getMonth();
   const nd = new Date(y, mo + 1, 0).getDate();
-  const list = active(), many = list.length > 6;
+  // Occasional habits stay out of the rings; a dot marks a day one was done.
+  const list = active().filter(h => !isOccasional(h)), occ = active().filter(isOccasional), many = list.length > 6;
   let cells = monthGridStart(), perfect = 0, dueDays = 0;
   for (let day = 1; day <= nd; day++) {
     const d = new Date(y, mo, day), k = key(d);
@@ -86,13 +89,14 @@ function monthAllHTML(tKey) {
         `<circle cx="20" cy="20" r="${r}" fill="none" stroke-width="3.6" stroke="${has(h.id, k) ? `var(--h-${h.color})` : 'var(--track)'}"
           stroke-dasharray="${seg} ${c - seg}" stroke-dashoffset="${-i * (seg + gap)}" transform="rotate(-90 20 20)"/>`).join('')}</svg>`;
     }
+    const extra = occ.filter(h => has(h.id, k));
     cells += `<button class="mc mc-all${isPerfect ? ' perfect' : ''}${k === tKey ? ' is-today' : ''}" type="button" data-dayall="${k}"
-      aria-label="${DAY_LONG[d.getDay()]} ${day} ${MONTHS[mo]}: ${doneN} of ${due.length} done">${svg}<span class="num"${numStyle}>${day}</span></button>`;
+      aria-label="${DAY_LONG[d.getDay()]} ${day} ${MONTHS[mo]}: ${doneN} of ${due.length} done${extra.length ? ', and ' + esc(extra.map(h => h.name).join(', ')) : ''}">${svg}<span class="num"${numStyle}>${day}</span>${extra.length ? `<i class="odot" style="--c:var(--h-${extra[0].color})"></i>` : ''}</button>`;
   }
   return `<div class="panel">${monthHead(tKey)}<div class="mgrid">${cells}</div>
     <p class="summary"><b>${perfect}</b> of ${plural(dueDays, 'day')} with everything done. Tap a day to see or change it.</p></div>
     <div class="legend">${list.map(h => `<span style="--c:var(--h-${h.color})"><i class="lg done sq"></i>${esc(h.name)}</span>`).join('')}
-    <span><i class="lg sq" style="background:var(--track)"></i>Due, not done</span></div>`;
+    <span><i class="lg sq" style="background:var(--track)"></i>Due, not done</span>${occ.length ? '<span><i class="lg odot"></i>Occasional, done</span>' : ''}</div>`;
 }
 
 // Habits × days of one week.
@@ -102,7 +106,7 @@ function weekHTML(h, tKey) {
   const days = [0, 1, 2, 3, 4, 5, 6].map(i => addDays(w0, i));
   const isCur = key(w0) === key(cur);
   const label = `${days[0].getDate()} ${MON_SHORT[days[0].getMonth()]} – ${days[6].getDate()} ${MON_SHORT[days[6].getMonth()]}`;
-  const list = h ? [h] : active();
+  const list = h ? [h] : active().filter(x => !isOccasional(x));
   let grid = '<div></div>' + days.map(d => `<div class="dh${key(d) === tKey ? ' is-today' : ''}">${DAY_SHORT[d.getDay()]}<b>${d.getDate()}</b></div>`).join('');
   let done = 0, due = 0;
   list.forEach(hb => {
@@ -186,7 +190,18 @@ function detailHTML(h, tKey) {
   return parts.length ? `<p class="detail">${parts.join('')}</p>` : '';
 }
 
+// An occasional habit has no strength or runs: how often it was done, and when it's next due.
+function occasionalStatsHTML(h, tKey) {
+  const o = occasionalOf(h, tKey), n = doneDates(h.id).length;
+  return `<div class="stats stats-3" style="--c:var(--h-${h.color})">
+    <div><b>${n}</b><span>${n === 1 ? 'Time done' : 'Times done'}</span></div>
+    <div><b>${o.last ? dayText(o.last) : 'Not yet'}</b><span>Last done</span></div>
+    <div><b>${dayText(o.due)}</b><span>${o.late ? 'Overdue since' : 'Next due'}</span></div></div>
+    <p class="explain">${esc(scheduleText(h))}, counted from the last time you ticked it, so doing it late moves the next one too. It doesn't count toward your daily progress.</p>`;
+}
+
 function statsHTML(h, tKey) {
+  if (isOccasional(h)) return occasionalStatsHTML(h, tKey);
   const st = habitStats(h, has, tKey, ws()), wk = st.unit === 'week';
   return `<div class="stats" style="--c:var(--h-${h.color})">
     <div><b>${st.strength}%</b><span>Strength</span><div class="meter"><i style="width:${st.strength}%"></i></div></div>
@@ -229,7 +244,7 @@ export function renderCalendar() {
     <div class="chips" role="group" aria-label="Habits">${chip('all', 'All habits')}${active().map(x => chip(x.id, x.name, x.icon)).join('')}</div>
     ${h ? statsHTML(h, tKey) : ''}
     ${body}
-    ${h ? barsHTML(h, tKey) : ''}`;
+    ${h && !isOccasional(h) ? barsHTML(h, tKey) : ''}`;
   const yw = $('#ywrap');
   if (yw) yw.scrollLeft = yw.scrollWidth;
 }

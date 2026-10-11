@@ -57,7 +57,7 @@ export async function enableReminders() {
 function slots() {
   const m = new Map();
   for (const h of active()) {
-    if (!h.reminder) continue;
+    if (!h.reminder || h.schedule.type === 'every') continue;   // occasional habits have no reminder yet
     const days = h.schedule.type === 'days' ? h.schedule.days : [0, 1, 2, 3, 4, 5, 6];
     m.set(h.reminder, new Set([...(m.get(h.reminder) || []), ...days]));
   }
